@@ -1589,7 +1589,7 @@ func After[T Instance](expr func(ctx context.Context, hsm T, event Event) time.D
 					if duration < 0 {
 						return
 					}
-					timer := time.NewTimer(duration)
+					timer := hsm.Clock().NewTimer(duration)
 					select {
 					case <-timer.C:
 						timer.Stop()
@@ -1648,7 +1648,7 @@ func Every[T Instance](expr func(ctx context.Context, hsm T, event Event) time.D
 					if duration < 0 {
 						return
 					}
-					timer := time.NewTimer(duration)
+					timer := hsm.Clock().NewTimer(duration)
 					defer timer.Stop()
 					for {
 						select {
@@ -1899,6 +1899,36 @@ type timeouts struct {
 	activity time.Duration
 }
 
+// Clock provides injectable timer functions used by the state machine runtime.
+// Nil fields fall back to DefaultClock.
+type Clock struct {
+	After    func(time.Duration) <-chan time.Time
+	NewTimer func(time.Duration) *time.Timer
+}
+
+// DefaultClock is used when Config.Clock does not override timer behavior.
+var DefaultClock = Clock{
+	After:    time.After,
+	NewTimer: time.NewTimer,
+}
+
+func (clock Clock) withDefaults() Clock {
+	defaultClock := DefaultClock
+	if defaultClock.After == nil {
+		defaultClock.After = time.After
+	}
+	if defaultClock.NewTimer == nil {
+		defaultClock.NewTimer = time.NewTimer
+	}
+	if clock.After == nil {
+		clock.After = defaultClock.After
+	}
+	if clock.NewTimer == nil {
+		clock.NewTimer = defaultClock.NewTimer
+	}
+	return clock
+}
+
 type mutex struct {
 	internal sync.RWMutex
 	signal   atomic.Value
@@ -2115,6 +2145,10 @@ func (group *Group) restart(ctx context.Context, maybeData ...any) <-chan struct
 	})
 }
 
+func (group *Group) Clock() Clock {
+	return DefaultClock
+}
+
 func (group *Group) waitAll(ctx context.Context, request func(instance Instance) <-chan struct{}, onDone ...func()) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
@@ -2179,6 +2213,7 @@ type Instance interface {
 	bind(instance Instance)
 	stop(ctx context.Context) <-chan struct{}
 	restart(ctx context.Context, maybeData ...any) <-chan struct{}
+	Clock() Clock
 }
 
 type hsm[T Instance] struct {
@@ -2193,6 +2228,7 @@ type hsm[T Instance] struct {
 	historyShallow map[string]string
 	historyDeep    map[string]string
 	instance       T
+	clock          Clock
 	timeouts       timeouts
 	processing     mutex
 	after          after
@@ -2204,6 +2240,8 @@ type Config struct {
 	ID string
 	// ActivityTimeout is the timeout for the state activity to terminate.
 	ActivityTimeout time.Duration
+	// Clock overrides the timer functions used by the state machine runtime.
+	Clock Clock
 	// Name is the name of the state machine.
 	Name string
 	// Data to be passed during initialization
@@ -2268,11 +2306,13 @@ func New[T Instance](sm T, model *Model, maybeConfig ...Config) T {
 		active:         map[string]*active{},
 		historyShallow: map[string]string{},
 		historyDeep:    map[string]string{},
+		clock:          DefaultClock.withDefaults(),
 	}
 	hsm.state.Store(&model.state)
 	if len(maybeConfig) > 0 {
 		config := maybeConfig[0]
 		hsm.timeouts.activity = config.ActivityTimeout
+		hsm.clock = config.Clock.withDefaults()
 		hsm.behavior.qualifiedName = config.Name
 		hsm.behavior.id = config.ID
 	}
@@ -2299,6 +2339,13 @@ func New[T Instance](sm T, model *Model, maybeConfig ...Config) T {
 }
 
 func (sm *hsm[T]) bind(instance Instance) {}
+
+func (sm *hsm[T]) Clock() Clock {
+	if sm == nil {
+		return DefaultClock
+	}
+	return sm.clock
+}
 
 func (sm *hsm[T]) State() string {
 	if sm == nil {
@@ -2907,7 +2954,7 @@ func (sm *hsm[T]) terminate(ctx context.Context, element Element) {
 	maybeActive.cancel()
 	select {
 	case <-maybeActive.channel:
-	case <-time.After(sm.timeouts.activity):
+	case <-sm.clock.After(sm.timeouts.activity):
 		go sm.dispatch(ctx, ErrorEvent.WithData(fmt.Errorf("terminate timeout: %s", element.QualifiedName())))
 	}
 

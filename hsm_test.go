@@ -660,6 +660,112 @@ func TestNeverAfter(t *testing.T) {
 	}
 }
 
+func TestConfigClockNewTimer(t *testing.T) {
+	var newTimerCalls atomic.Int32
+	model := hsm.Define(
+		"ConfigClockNewTimerHSM",
+		hsm.State("foo"),
+		hsm.State("bar"),
+		hsm.Transition(
+			hsm.After(func(ctx context.Context, sm *THSM, event hsm.Event) time.Duration {
+				return time.Millisecond
+			}),
+			hsm.Source("/foo"),
+			hsm.Target("/bar"),
+		),
+		hsm.Initial(hsm.Target("foo")),
+	)
+	sm := hsm.Started(context.Background(), &THSM{}, &model, hsm.Config{
+		Clock: hsm.Clock{
+			NewTimer: func(d time.Duration) *time.Timer {
+				newTimerCalls.Add(1)
+				return time.NewTimer(d)
+			},
+		},
+	})
+	deadline := time.After(time.Second)
+	for sm.State() != "/ConfigClockNewTimerHSM/bar" {
+		select {
+		case <-deadline:
+			t.Fatalf("expected state transition, got %s", sm.State())
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if newTimerCalls.Load() == 0 {
+		t.Fatal("expected config clock NewTimer to be called")
+	}
+}
+
+func TestDefaultClockNewTimer(t *testing.T) {
+	originalClock := hsm.DefaultClock
+	t.Cleanup(func() {
+		hsm.DefaultClock = originalClock
+	})
+	var newTimerCalls atomic.Int32
+	hsm.DefaultClock = hsm.Clock{
+		NewTimer: func(d time.Duration) *time.Timer {
+			newTimerCalls.Add(1)
+			return time.NewTimer(d)
+		},
+	}
+	model := hsm.Define(
+		"DefaultClockNewTimerHSM",
+		hsm.State("foo"),
+		hsm.State("bar"),
+		hsm.Transition(
+			hsm.After(func(ctx context.Context, sm *THSM, event hsm.Event) time.Duration {
+				return time.Millisecond
+			}),
+			hsm.Source("/foo"),
+			hsm.Target("/bar"),
+		),
+		hsm.Initial(hsm.Target("foo")),
+	)
+	sm := hsm.Started(context.Background(), &THSM{}, &model)
+	deadline := time.After(time.Second)
+	for sm.State() != "/DefaultClockNewTimerHSM/bar" {
+		select {
+		case <-deadline:
+			t.Fatalf("expected state transition, got %s", sm.State())
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if newTimerCalls.Load() == 0 {
+		t.Fatal("expected default clock NewTimer to be called")
+	}
+}
+
+func TestConfigClockAfterOnTerminate(t *testing.T) {
+	var afterCalls atomic.Int32
+	model := hsm.Define(
+		"ConfigClockAfterTerminateHSM",
+		hsm.State("foo",
+			hsm.Activity(func(ctx context.Context, sm *THSM, event hsm.Event) {
+				<-ctx.Done()
+				select {}
+			}),
+		),
+		hsm.Initial(hsm.Target("foo")),
+	)
+	sm := hsm.Started(context.Background(), &THSM{}, &model, hsm.Config{
+		ActivityTimeout: time.Hour,
+		Clock: hsm.Clock{
+			After: func(d time.Duration) <-chan time.Time {
+				afterCalls.Add(1)
+				ch := make(chan time.Time)
+				close(ch)
+				return ch
+			},
+		},
+	})
+	<-hsm.Stop(context.Background(), sm)
+	if afterCalls.Load() == 0 {
+		t.Fatal("expected config clock After to be called during terminate")
+	}
+}
+
 func TestDispatchTo(t *testing.T) {
 	fooEvent := hsm.Event{
 		Name: "foo",
