@@ -152,6 +152,27 @@ var (
 	CustomKind = kind.Make(ElementKind)
 )
 
+type stringLike interface {
+	~string
+}
+
+type redefinableOrString interface {
+	RedefinableElement | ~string
+}
+
+var stringValueType = reflect.TypeFor[string]()
+
+func normalizeRedefinableOrString[T redefinableOrString](value T) (string, RedefinableElement, bool) {
+	if element, ok := any(value).(RedefinableElement); ok {
+		return "", element, true
+	}
+	reflected := reflect.ValueOf(value)
+	if reflected.Kind() != reflect.String {
+		panic(fmt.Sprintf("expected string-like or RedefinableElement, got %T", value))
+	}
+	return reflected.Convert(stringValueType).Interface().(string), nil, false
+}
+
 // Error variables for common HSM error conditions.
 // These sentinel errors can be checked using errors.Is for specific error handling.
 var (
@@ -548,10 +569,11 @@ func apply(model *Model, stack []Element, partials ...RedefinableElement) {
 //	    hsm.State("green"),
 //	    hsm.Initial("red")
 //	)
-func Define(name string, redefinableElements ...RedefinableElement) Model {
+func Define[T stringLike](name T, redefinableElements ...RedefinableElement) Model {
+	modelName := string(name)
 	model := Model{
 		state: state{
-			vertex: vertex{element: element{kind: StateKind, qualifiedName: path.Join("/", name), id: name}, transitions: []string{}},
+			vertex: vertex{element: element{kind: StateKind, qualifiedName: path.Join("/", modelName), id: modelName}, transitions: []string{}},
 		},
 		elements:      redefinableElements,
 		events:        map[string]*Event{},
@@ -717,15 +739,16 @@ func getFunctionName(fn any) string {
 //	        log.Println("Exiting active state")
 //	    })
 //	)
-func State(name string, partialElements ...RedefinableElement) RedefinableElement {
+func State[T stringLike](name T, partialElements ...RedefinableElement) RedefinableElement {
+	stateName := string(name)
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
 		owner := find(stack, NamespaceKind)
 		if owner == nil {
-			traceback(fmt.Errorf("state \"%s\" must be called within Define() or State()", name))
+			traceback(fmt.Errorf("state \"%s\" must be called within Define() or State()", stateName))
 		}
 		element := &state{
-			vertex: vertex{element: element{kind: StateKind, qualifiedName: path.Join(owner.QualifiedName(), name)}, transitions: []string{}},
+			vertex: vertex{element: element{kind: StateKind, qualifiedName: path.Join(owner.QualifiedName(), stateName)}, transitions: []string{}},
 		}
 		if _, ok := model.members[element.QualifiedName()]; ok {
 			traceback(fmt.Errorf("state \"%s\" already defined", element.QualifiedName()))
@@ -829,13 +852,10 @@ func IsAncestor(current, target string) bool {
 //	        log.Println("Transitioning from draft to review")
 //	    })
 //	)
-func Transition[T interface{ RedefinableElement | string }](nameOrPartialElement T, partialElements ...RedefinableElement) RedefinableElement {
-	name := ""
-	switch any(nameOrPartialElement).(type) {
-	case string:
-		name = any(nameOrPartialElement).(string)
-	case RedefinableElement:
-		partialElements = append([]RedefinableElement{any(nameOrPartialElement).(RedefinableElement)}, partialElements...)
+func Transition[T redefinableOrString](nameOrPartialElement T, partialElements ...RedefinableElement) RedefinableElement {
+	name, partialElement, hasPartialElement := normalizeRedefinableOrString(nameOrPartialElement)
+	if hasPartialElement {
+		partialElements = append([]RedefinableElement{partialElement}, partialElements...)
 	}
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
@@ -952,7 +972,7 @@ func Transition[T interface{ RedefinableElement | string }](nameOrPartialElement
 //	    hsm.Source("idle"),
 //	    hsm.Target("running")
 //	)
-func Source[T interface{ RedefinableElement | string }](nameOrPartialElement T) RedefinableElement {
+func Source[T redefinableOrString](nameOrPartialElement T) RedefinableElement {
 	// Capture the stack depth for use in traceback
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
@@ -965,9 +985,14 @@ func Source[T interface{ RedefinableElement | string }](nameOrPartialElement T) 
 			traceback(fmt.Errorf("transition \"%s\" already has a source \"%s\"", transition.QualifiedName(), transition.source))
 		}
 		var name string
-		switch any(nameOrPartialElement).(type) {
-		case string:
-			name = any(nameOrPartialElement).(string)
+		if partialElement, ok := any(nameOrPartialElement).(RedefinableElement); ok {
+			element := partialElement(model, stack)
+			if element == nil {
+				traceback(fmt.Errorf("transition \"%s\" source is nil", transition.QualifiedName()))
+			}
+			name = element.QualifiedName()
+		} else {
+			name, _, _ = normalizeRedefinableOrString(nameOrPartialElement)
 			if !path.IsAbs(name) {
 				if ancestor := find(stack, StateKind); ancestor != nil {
 					name = path.Join(ancestor.QualifiedName(), name)
@@ -982,12 +1007,6 @@ func Source[T interface{ RedefinableElement | string }](nameOrPartialElement T) 
 				}
 				return owner
 			})
-		case RedefinableElement:
-			element := any(nameOrPartialElement).(RedefinableElement)(model, stack)
-			if element == nil {
-				traceback(fmt.Errorf("transition \"%s\" source is nil", transition.QualifiedName()))
-			}
-			name = element.QualifiedName()
 		}
 		transition.source = name
 		return owner
@@ -1033,7 +1052,7 @@ func Defer[T interface {
 //	    hsm.Source("idle"),
 //	    hsm.Target("running")
 //	)
-func Target[T interface{ RedefinableElement | string }](nameOrPartialElement T) RedefinableElement {
+func Target[T redefinableOrString](nameOrPartialElement T) RedefinableElement {
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
 		owner := find(stack, TransitionKind)
@@ -1045,9 +1064,14 @@ func Target[T interface{ RedefinableElement | string }](nameOrPartialElement T) 
 			traceback(fmt.Errorf("transition \"%s\" already has target \"%s\"", transition.QualifiedName(), transition.target))
 		}
 		var qualifiedName string
-		switch target := any(nameOrPartialElement).(type) {
-		case string:
-			qualifiedName = target
+		if target, ok := any(nameOrPartialElement).(RedefinableElement); ok {
+			targetElement := target(model, stack)
+			if targetElement == nil {
+				traceback(fmt.Errorf("transition \"%s\" target is nil", transition.QualifiedName()))
+			}
+			qualifiedName = targetElement.QualifiedName()
+		} else {
+			qualifiedName, _, _ = normalizeRedefinableOrString(nameOrPartialElement)
 			if !path.IsAbs(qualifiedName) {
 				if ancestor := find(stack, StateKind); ancestor != nil {
 					qualifiedName = path.Join(ancestor.QualifiedName(), qualifiedName)
@@ -1058,16 +1082,10 @@ func Target[T interface{ RedefinableElement | string }](nameOrPartialElement T) 
 			// push a validation step to ensure the target exists after the model is built
 			model.push(func(model *Model, stack []Element) Element {
 				if _, exists := model.members[qualifiedName]; !exists {
-					traceback(fmt.Errorf("missing target \"%s\" for transition \"%s\"", target, transition.QualifiedName()))
+					traceback(fmt.Errorf("missing target \"%s\" for transition \"%s\"", qualifiedName, transition.QualifiedName()))
 				}
 				return transition
 			})
-		case RedefinableElement:
-			targetElement := target(model, stack)
-			if targetElement == nil {
-				traceback(fmt.Errorf("transition \"%s\" target is nil", transition.QualifiedName()))
-			}
-			qualifiedName = targetElement.QualifiedName()
 		}
 
 		transition.target = qualifiedName
@@ -1132,13 +1150,14 @@ func Guard[T Instance](fn func(ctx context.Context, hsm T, event Event) bool) Re
 // Attribute declares a model-level attribute with an optional default value.
 // Attributes can be observed via OnSet("name") transitions and updated at runtime
 // via Set / Instance.Set.
-func Attribute(name string, maybeDefault ...any) RedefinableElement {
+func Attribute[T stringLike](name T, maybeDefault ...any) RedefinableElement {
+	attributeName := string(name)
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
-		if name == "" {
+		if attributeName == "" {
 			traceback(fmt.Errorf("attribute name cannot be empty"))
 		}
-		qualifiedName := qualifyModelName(model.qualifiedName, name)
+		qualifiedName := qualifyModelName(model.qualifiedName, attributeName)
 		if model.attributes == nil {
 			model.attributes = map[string]*attribute{}
 		}
@@ -1157,13 +1176,14 @@ func Attribute(name string, maybeDefault ...any) RedefinableElement {
 
 // Operation declares a named callable for Call()/OnCall().
 // Supported callables include function values and method expressions.
-func Operation(name string, fn any) RedefinableElement {
+func Operation[T stringLike](name T, fn any) RedefinableElement {
+	operationName := string(name)
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
-		if name == "" {
+		if operationName == "" {
 			traceback(fmt.Errorf("operation name cannot be empty"))
 		}
-		qualifiedName := qualifyModelName(model.qualifiedName, name)
+		qualifiedName := qualifyModelName(model.qualifiedName, operationName)
 		if model.operations == nil {
 			model.operations = map[string]*operationDef{}
 		}
@@ -1245,13 +1265,10 @@ func Initial(partialElements ...RedefinableElement) RedefinableElement {
 //	        hsm.Target("rejected")
 //	    )
 //	)
-func Choice[T interface{ RedefinableElement | string }](elementOrName T, partialElements ...RedefinableElement) RedefinableElement {
-	name := ""
-	switch any(elementOrName).(type) {
-	case string:
-		name = any(elementOrName).(string)
-	case RedefinableElement:
-		partialElements = append([]RedefinableElement{any(elementOrName).(RedefinableElement)}, partialElements...)
+func Choice[T redefinableOrString](elementOrName T, partialElements ...RedefinableElement) RedefinableElement {
+	name, partialElement, hasPartialElement := normalizeRedefinableOrString(elementOrName)
+	if hasPartialElement {
+		partialElements = append([]RedefinableElement{partialElement}, partialElements...)
 	}
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
@@ -1298,13 +1315,10 @@ func Choice[T interface{ RedefinableElement | string }](elementOrName T, partial
 // ShallowHistory creates a shallow history pseudostate within a composite state.
 // If no history is available, any transitions defined on this pseudostate are used;
 // otherwise the parent state's initial is used.
-func ShallowHistory[T interface{ RedefinableElement | string }](elementOrName T, partialElements ...RedefinableElement) RedefinableElement {
-	name := ""
-	switch any(elementOrName).(type) {
-	case string:
-		name = any(elementOrName).(string)
-	case RedefinableElement:
-		partialElements = append([]RedefinableElement{any(elementOrName).(RedefinableElement)}, partialElements...)
+func ShallowHistory[T redefinableOrString](elementOrName T, partialElements ...RedefinableElement) RedefinableElement {
+	name, partialElement, hasPartialElement := normalizeRedefinableOrString(elementOrName)
+	if hasPartialElement {
+		partialElements = append([]RedefinableElement{partialElement}, partialElements...)
 	}
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
@@ -1329,13 +1343,10 @@ func ShallowHistory[T interface{ RedefinableElement | string }](elementOrName T,
 // DeepHistory creates a deep history pseudostate within a composite state.
 // If no history is available, any transitions defined on this pseudostate are used;
 // otherwise the parent state's initial is used.
-func DeepHistory[T interface{ RedefinableElement | string }](elementOrName T, partialElements ...RedefinableElement) RedefinableElement {
-	name := ""
-	switch any(elementOrName).(type) {
-	case string:
-		name = any(elementOrName).(string)
-	case RedefinableElement:
-		partialElements = append([]RedefinableElement{any(elementOrName).(RedefinableElement)}, partialElements...)
+func DeepHistory[T redefinableOrString](elementOrName T, partialElements ...RedefinableElement) RedefinableElement {
+	name, partialElement, hasPartialElement := normalizeRedefinableOrString(elementOrName)
+	if hasPartialElement {
+		partialElements = append([]RedefinableElement{partialElement}, partialElements...)
 	}
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
@@ -1486,17 +1497,18 @@ func On[T interface{ *Event | Event }](events ...T) RedefinableElement {
 
 // OnSet creates an attribute-change trigger for the given attribute name.
 // It is the attribute-based equivalent of On(...) and is driven by Set.
-func OnSet(name string) RedefinableElement {
+func OnSet[T stringLike](name T) RedefinableElement {
+	attributeName := string(name)
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
 		owner := find(stack, TransitionKind)
 		if owner == nil {
 			traceback(fmt.Errorf("OnSet() must be called within a Transition"))
 		}
-		if name == "" {
+		if attributeName == "" {
 			traceback(fmt.Errorf("OnSet() requires a non-empty attribute name"))
 		}
-		qualifiedName := qualifyModelName(model.qualifiedName, name)
+		qualifiedName := qualifyModelName(model.qualifiedName, attributeName)
 		transition := owner.(*transition)
 		eventName := qualifiedName
 		transition.events = append(transition.events, eventName)
@@ -1516,17 +1528,18 @@ func OnSet(name string) RedefinableElement {
 }
 
 // OnCall creates a trigger for Call() invocations of the named operation.
-func OnCall(name string) RedefinableElement {
+func OnCall[T stringLike](name T) RedefinableElement {
+	operationName := string(name)
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
 		owner := find(stack, TransitionKind)
 		if owner == nil {
 			traceback(fmt.Errorf("OnCall() must be called within a Transition"))
 		}
-		if name == "" {
+		if operationName == "" {
 			traceback(fmt.Errorf("OnCall() requires a non-empty operation name"))
 		}
-		qualifiedName := qualifyModelName(model.qualifiedName, name)
+		qualifiedName := qualifyModelName(model.qualifiedName, operationName)
 		transition := owner.(*transition)
 		eventName := qualifiedName
 		transition.events = append(transition.events, eventName)
@@ -1590,6 +1603,64 @@ func After[T Instance](expr func(ctx context.Context, hsm T, event Event) time.D
 						return
 					}
 					timer := hsm.Clock().NewTimer(duration)
+					select {
+					case <-timer.C:
+						timer.Stop()
+						hsm.dispatch(hsm.Context(), event)
+						return
+					case <-ctx.Done():
+						timer.Stop()
+						return
+					}
+				},
+			}
+			model.members[activity.QualifiedName()] = activity
+			source.activities = append(source.activities, activity.QualifiedName())
+			return owner
+		})
+		return owner
+	}
+}
+
+// At creates a time-based transition that occurs at a specific timestamp.
+// The timestamp can be dynamically computed based on the state machine's context.
+//
+// Example:
+//
+//	hsm.Transition(
+//	    hsm.At(func(ctx context.Context, hsm *MyHSM, event Event) time.Time {
+//	        return time.Now().Add(time.Minute)
+//	    }),
+//	    hsm.Source("active"),
+//	    hsm.Target("timeout")
+//	)
+func At[T Instance](expr func(ctx context.Context, hsm T, event Event) time.Time) RedefinableElement {
+	traceback := traceback()
+	name := getFunctionName(expr)
+	return func(model *Model, stack []Element) Element {
+		owner, ok := find(stack, TransitionKind).(*transition)
+		if !ok {
+			traceback(fmt.Errorf("at must be called within a Transition"))
+		}
+		qualifiedName := path.Join(owner.QualifiedName(), name, strconv.Itoa(len(model.members)))
+		event := Event{
+			Kind: TimeEventKind,
+			Name: qualifiedName,
+		}
+		owner.events = append(owner.events, qualifiedName)
+		model.push(func(model *Model, stack []Element) Element {
+			maybeSource, ok := model.members[owner.source]
+			if !ok {
+				traceback(fmt.Errorf("source \"%s\" for transition \"%s\" not found", owner.source, owner.QualifiedName()))
+			}
+			source, ok := maybeSource.(*state)
+			if !ok {
+				traceback(fmt.Errorf("at can only be used on transitions where the source is a State, not \"%s\"", maybeSource.QualifiedName()))
+			}
+			activity := &behavior[T]{
+				element: element{kind: ConcurrentKind, qualifiedName: path.Join(source.QualifiedName(), "activity", qualifiedName)},
+				operation: func(ctx context.Context, hsm T, _ Event) {
+					timer := hsm.Clock().NewTimer(time.Until(expr(ctx, hsm, event)))
 					select {
 					case <-timer.C:
 						timer.Stop()
@@ -1727,15 +1798,16 @@ func When[T Instance](expr func(ctx context.Context, hsm T, event Event) <-chan 
 //	        hsm.Target("done")
 //	    )
 //	)
-func Final(name string) RedefinableElement {
+func Final[T stringLike](name T) RedefinableElement {
+	finalName := string(name)
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
 		owner := find(stack, NamespaceKind)
 		if owner == nil {
-			traceback(fmt.Errorf("final \"%s\" must be called within Define() or State()", name))
+			traceback(fmt.Errorf("final \"%s\" must be called within Define() or State()", finalName))
 		}
 		state := &state{
-			vertex: vertex{element: element{kind: FinalStateKind, qualifiedName: path.Join(owner.QualifiedName(), name)}, transitions: []string{}},
+			vertex: vertex{element: element{kind: FinalStateKind, qualifiedName: path.Join(owner.QualifiedName(), finalName)}, transitions: []string{}},
 		}
 		model.members[state.QualifiedName()] = state
 		model.push(
@@ -1761,27 +1833,29 @@ func Final(name string) RedefinableElement {
 
 // Match provides a simple interface, handling basic cases directly
 // and delegating complex matching to the match function.
-func Match(value string, patterns ...string) bool {
+func Match[V stringLike, P stringLike](value V, patterns ...P) bool {
+	matchValue := string(value)
 	for _, pattern := range patterns {
+		matchPattern := string(pattern)
 		// fast path for exact match
-		if pattern == value {
+		if matchPattern == matchValue {
 			return true
 		}
 		// fast path for pure wildcard match
-		if pattern == "*" {
+		if matchPattern == "*" {
 			return true
 		}
-		patternLen := len(pattern)
+		patternLen := len(matchPattern)
 		// fast path for empty pattern
 		if patternLen == 0 {
-			return value == ""
+			return matchValue == ""
 		}
 		// fast path for long strings with a pattern that ends with "*
-		if pattern[patternLen-1] == '*' && strings.HasPrefix(value, pattern[:patternLen-1]) {
+		if matchPattern[patternLen-1] == '*' && strings.HasPrefix(matchValue, matchPattern[:patternLen-1]) {
 			return true
 		}
 		// parse the value and pattern to check for a match
-		if parse(value, pattern) {
+		if parse(matchValue, matchPattern) {
 			return true
 		}
 	}
@@ -2024,27 +2098,27 @@ func (group *Group) Context() context.Context {
 	return group.instances[0].Context()
 }
 
-func (group *Group) Get(name string) (any, bool) {
+func (group *Group) get(name string) (any, bool) {
 	if group == nil || len(group.instances) == 0 {
 		return nil, false
 	}
-	return group.instances[0].Get(name)
+	return Get(context.Background(), group.instances[0], name)
 }
 
-func (group *Group) Set(ctx context.Context, name string, value any) <-chan struct{} {
+func (group *Group) set(ctx context.Context, name string, value any) <-chan struct{} {
 	if group == nil || len(group.instances) == 0 {
 		return closedChannel
 	}
 	return group.waitAll(ctx, func(instance Instance) <-chan struct{} {
-		return instance.Set(ctx, name, value)
+		return Set(ctx, instance, name, value)
 	})
 }
 
-func (group *Group) Call(ctx context.Context, name string, args ...any) (any, error) {
+func (group *Group) call(ctx context.Context, name string, args ...any) (any, error) {
 	if group == nil || len(group.instances) == 0 {
 		return nil, ErrMissingHSM
 	}
-	return group.instances[0].Call(ctx, name, args...)
+	return Call(ctx, group.instances[0], name, args...)
 }
 
 func (group *Group) channels() *after {
@@ -2201,9 +2275,9 @@ type Instance interface {
 	// State returns the current state's qualified name.
 	State() string
 	Context() context.Context
-	Get(name string) (any, bool)
-	Set(ctx context.Context, name string, value any) <-chan struct{}
-	Call(ctx context.Context, name string, args ...any) (any, error)
+	get(name string) (any, bool)
+	set(ctx context.Context, name string, value any) <-chan struct{}
+	call(ctx context.Context, name string, args ...any) (any, error)
 	// non exported
 	channels() *after
 	takeSnapshot() Snapshot
@@ -2436,7 +2510,7 @@ func (sm *hsm[T]) Context() context.Context {
 	return sm.context
 }
 
-func (sm *hsm[T]) Get(name string) (any, bool) {
+func (sm *hsm[T]) get(name string) (any, bool) {
 	if sm == nil {
 		return nil, false
 	}
@@ -2444,7 +2518,7 @@ func (sm *hsm[T]) Get(name string) (any, bool) {
 	return sm.attributes.Load(qualifiedName)
 }
 
-func (sm *hsm[T]) Set(ctx context.Context, name string, value any) <-chan struct{} {
+func (sm *hsm[T]) set(ctx context.Context, name string, value any) <-chan struct{} {
 	return sm.setAttribute(ctx, name, value, true)
 }
 
@@ -2477,7 +2551,7 @@ func (sm *hsm[T]) setAttribute(ctx context.Context, name string, value any, emit
 	return sm.dispatch(ctx, event)
 }
 
-func (sm *hsm[T]) Call(ctx context.Context, name string, args ...any) (any, error) {
+func (sm *hsm[T]) call(ctx context.Context, name string, args ...any) (any, error) {
 	if sm == nil {
 		return nil, ErrNilHSM
 	}
@@ -3155,34 +3229,37 @@ func Dispatch[T context.Context](ctx T, hsm Instance, event Event) <-chan struct
 }
 
 // Get reads an attribute value from the given state machine or from context.
-func Get(ctx context.Context, hsm Instance, name string) (any, bool) {
+func Get[T stringLike](ctx context.Context, hsm Instance, name T) (any, bool) {
+	attributeName := string(name)
 	if hsm != nil {
-		return hsm.Get(name)
+		return hsm.get(attributeName)
 	}
 	if hsm, ok := FromContext(ctx); ok {
-		return hsm.Get(name)
+		return hsm.get(attributeName)
 	}
 	return nil, false
 }
 
 // Set updates an attribute value and emits an OnSet change event.
-func Set(ctx context.Context, hsm Instance, name string, value any) <-chan struct{} {
+func Set[T stringLike](ctx context.Context, hsm Instance, name T, value any) <-chan struct{} {
+	attributeName := string(name)
 	if hsm != nil {
-		return hsm.Set(ctx, name, value)
+		return hsm.set(ctx, attributeName, value)
 	}
 	if hsm, ok := FromContext(ctx); ok {
-		return hsm.Set(ctx, name, value)
+		return hsm.set(ctx, attributeName, value)
 	}
 	return closedChannel
 }
 
 // Call dispatches an OnCall event and invokes the named operation.
-func Call(ctx context.Context, hsm Instance, name string, args ...any) (any, error) {
+func Call[T stringLike](ctx context.Context, hsm Instance, name T, args ...any) (any, error) {
+	operationName := string(name)
 	if hsm != nil {
-		return hsm.Call(ctx, name, args...)
+		return hsm.call(ctx, operationName, args...)
 	}
 	if hsm, ok := FromContext(ctx); ok {
-		return hsm.Call(ctx, name, args...)
+		return hsm.call(ctx, operationName, args...)
 	}
 	return nil, ErrMissingHSM
 }
@@ -3199,10 +3276,10 @@ func Call(ctx context.Context, hsm Instance, name string, args ...any) (any, err
 //	done := hsm.DispatchAll(context.Background(), hsm.Event{Name: "globalEvent"})
 //	<-done // Wait for all instances to process the event
 func DispatchAll(ctx context.Context, event Event) <-chan struct{} {
-	return DispatchTo(ctx, event)
+	return DispatchTo[string](ctx, event)
 }
 
-func DispatchTo(ctx context.Context, event Event, maybeIds ...string) <-chan struct{} {
+func DispatchTo[T stringLike](ctx context.Context, event Event, maybeIds ...T) <-chan struct{} {
 	instances, ok := ctx.Value(Keys.Instances).(*sync.Map)
 	if !ok || instances == nil {
 		return closedChannel
@@ -3257,16 +3334,16 @@ func AfterDispatch(ctx context.Context, hsm Instance, event Event) <-chan struct
 // AfterEntry returns a channel that closes when the specified state is entered.
 // The state parameter should be the fully qualified state path (e.g., "/parent/child").
 // Useful for waiting until a particular state becomes active.
-func AfterEntry(ctx context.Context, hsm Instance, state string) <-chan struct{} {
-	ch, _ := hsm.channels().entered.LoadOrStore(state, make(chan struct{}))
+func AfterEntry[T stringLike](ctx context.Context, hsm Instance, state T) <-chan struct{} {
+	ch, _ := hsm.channels().entered.LoadOrStore(string(state), make(chan struct{}))
 	return ch.(chan struct{})
 }
 
 // AfterExit returns a channel that closes when the specified state is exited.
 // The state parameter should be the fully qualified state path (e.g., "/parent/child").
 // Useful for waiting until a particular state is no longer active.
-func AfterExit(ctx context.Context, hsm Instance, state string) <-chan struct{} {
-	ch, _ := hsm.channels().exited.LoadOrStore(state, make(chan struct{}))
+func AfterExit[T stringLike](ctx context.Context, hsm Instance, state T) <-chan struct{} {
+	ch, _ := hsm.channels().exited.LoadOrStore(string(state), make(chan struct{}))
 	return ch.(chan struct{})
 }
 
@@ -3274,8 +3351,8 @@ func AfterExit(ctx context.Context, hsm Instance, state string) <-chan struct{} 
 // do-activity has completed execution. The state parameter should be the
 // fully qualified state path. Useful for waiting until a state's background
 // activity finishes.
-func AfterExecuted(ctx context.Context, hsm Instance, state string) <-chan struct{} {
-	ch, _ := hsm.channels().executed.LoadOrStore(state, make(chan struct{}))
+func AfterExecuted[T stringLike](ctx context.Context, hsm Instance, state T) <-chan struct{} {
+	ch, _ := hsm.channels().executed.LoadOrStore(string(state), make(chan struct{}))
 	return ch.(chan struct{})
 }
 

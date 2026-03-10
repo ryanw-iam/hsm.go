@@ -597,6 +597,101 @@ func TestHSMDispatchAll(t *testing.T) {
 	}
 }
 
+func TestCustomStringStateTypes(t *testing.T) {
+	type stateName string
+	type transitionName string
+	type modelName string
+
+	const (
+		testModel modelName = "CustomStringStateTypes"
+		foo       stateName = "foo"
+		bar       stateName = "bar"
+	)
+
+	model := hsm.Define(
+		testModel,
+		hsm.Initial(hsm.Target(foo)),
+		hsm.State(foo),
+		hsm.State(bar),
+		hsm.Transition(
+			transitionName("foo_to_bar"),
+			hsm.On(fooEvent),
+			hsm.Source(foo),
+			hsm.Target(bar),
+		),
+	)
+	sm := hsm.Started(context.Background(), &THSM{}, &model)
+	if sm.State() != "/CustomStringStateTypes/foo" {
+		t.Fatal("state is not correct", "state", sm.State())
+	}
+	<-hsm.Dispatch(context.Background(), sm, fooEvent)
+	if sm.State() != "/CustomStringStateTypes/bar" {
+		t.Fatal("state is not correct", "state", sm.State())
+	}
+}
+
+func TestCustomStringPublicFunctions(t *testing.T) {
+	type modelName string
+	type stateName string
+	type transitionName string
+	type attributeName string
+	type operationName string
+	type statePath string
+	type pattern string
+
+	const (
+		testModel modelName      = "CustomStringPublicFunctions"
+		idle      stateName      = "idle"
+		changed   stateName      = "changed"
+		called    stateName      = "called"
+		setMove   transitionName = "set_move"
+		callMove  transitionName = "call_move"
+		counter   attributeName  = "counter"
+		doThing   operationName  = "do"
+	)
+
+	model := hsm.Define(
+		testModel,
+		hsm.Attribute(counter, 0),
+		hsm.Operation(doThing, func() string { return "ok" }),
+		hsm.State(idle),
+		hsm.State(changed),
+		hsm.State(called),
+		hsm.Transition(setMove, hsm.OnSet(counter), hsm.Source(idle), hsm.Target(changed)),
+		hsm.Transition(callMove, hsm.OnCall(doThing), hsm.Source(changed), hsm.Target(called)),
+		hsm.Initial(hsm.Target(idle)),
+	)
+
+	sm := hsm.Started(context.Background(), &THSM{}, &model)
+	if value, ok := hsm.Get(sm.Context(), sm, counter); !ok || value != 0 {
+		t.Fatalf("expected default attribute value, got %v (ok=%t)", value, ok)
+	}
+
+	changedEntered := hsm.AfterEntry(sm.Context(), sm, statePath("/CustomStringPublicFunctions/changed"))
+	<-hsm.Set(sm.Context(), sm, counter, 1)
+	<-changedEntered
+	if sm.State() != "/CustomStringPublicFunctions/changed" {
+		t.Fatal("state is not correct after Set", "state", sm.State())
+	}
+
+	calledEntered := hsm.AfterEntry(sm.Context(), sm, statePath("/CustomStringPublicFunctions/called"))
+	result, err := hsm.Call(sm.Context(), sm, doThing)
+	if err != nil {
+		t.Fatalf("unexpected call error: %v", err)
+	}
+	if result != "ok" {
+		t.Fatalf("unexpected call result: %v", result)
+	}
+	<-calledEntered
+	if sm.State() != "/CustomStringPublicFunctions/called" {
+		t.Fatal("state is not correct after Call", "state", sm.State())
+	}
+
+	if !hsm.Match(statePath(sm.State()), pattern("/CustomStringPublicFunctions/*")) {
+		t.Fatal("custom string Match did not match state path", "state", sm.State())
+	}
+}
+
 func TestEvery(t *testing.T) {
 	timestamps := []time.Time{}
 	mutex := sync.Mutex{}
@@ -924,10 +1019,10 @@ func TestAttributeDefaultAndOnSet(t *testing.T) {
 		hsm.Initial(hsm.Target("idle")),
 	)
 	sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
-	if value, ok := sm.Get("count"); !ok || value.(int) != 1 {
+	if value, ok := hsm.Get(context.Background(), sm, "count"); !ok || value.(int) != 1 {
 		t.Fatal("expected default attribute value", "value", value, "ok", ok)
 	}
-	<-sm.Set(context.Background(), "count", 1)
+	<-hsm.Set(context.Background(), sm, "count", 1)
 	if sm.State() != "/AttrHSM/idle" {
 		t.Fatal("state changed on identical attribute set", "state", sm.State())
 	}
@@ -936,7 +1031,7 @@ func TestAttributeDefaultAndOnSet(t *testing.T) {
 		t.Fatal("unexpected attribute change event for identical value")
 	default:
 	}
-	<-sm.Set(context.Background(), "count", 2)
+	<-hsm.Set(context.Background(), sm, "count", 2)
 	if sm.State() != "/AttrHSM/changed" {
 		t.Fatal("state did not transition on attribute change", "state", sm.State())
 	}
@@ -987,10 +1082,10 @@ func TestOnSetImplicitAttribute(t *testing.T) {
 		hsm.Initial(hsm.Target("idle")),
 	)
 	sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
-	if _, ok := sm.Get("dynamic"); ok {
+	if _, ok := hsm.Get(context.Background(), sm, "dynamic"); ok {
 		t.Fatal("expected no default for implicit attribute")
 	}
-	<-sm.Set(context.Background(), "dynamic", 42)
+	<-hsm.Set(context.Background(), sm, "dynamic", 42)
 	if sm.State() != "/AttrImplicitHSM/changed" {
 		t.Fatal("state did not transition on implicit attribute change", "state", sm.State())
 	}
@@ -1029,7 +1124,7 @@ func TestAttributeValidation(t *testing.T) {
 			hsm.Initial(hsm.Target("s")),
 		)
 		sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
-		if value, ok := sm.Get("bad/name"); !ok || value.(int) != 7 {
+		if value, ok := hsm.Get(context.Background(), sm, "bad/name"); !ok || value.(int) != 7 {
 			t.Fatal("expected qualified attribute default", "value", value, "ok", ok)
 		}
 	})
@@ -1065,7 +1160,7 @@ func TestAttributeValidation(t *testing.T) {
 			hsm.Initial(hsm.Target("s")),
 		)
 		sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
-		<-sm.Set(context.Background(), "bad/name", 1)
+		<-hsm.Set(context.Background(), sm, "bad/name", 1)
 		if sm.State() != "/OnSetSlash/t" {
 			t.Fatal("state did not transition on slashed attribute", "state", sm.State())
 		}
@@ -1100,7 +1195,7 @@ func TestCallOperationAndOnCallTransition(t *testing.T) {
 		hsm.Initial(hsm.Target("idle")),
 	)
 	sm := hsm.Started(context.Background(), &CallOrderHSM{}, &model)
-	result, err := sm.Call(context.Background(), "do", 1, "two")
+	result, err := hsm.Call(context.Background(), sm, "do", 1, "two")
 	if err != nil {
 		t.Fatal("call returned error", "err", err)
 	}
@@ -1189,54 +1284,54 @@ func TestCallSignatureMatchingAndErrors(t *testing.T) {
 	)
 	ctx := context.WithValue(context.Background(), ctxKey("k"), "ctx-ok")
 	sm := hsm.Started(ctx, &CallSigHSM{}, &model)
-	result, err := sm.Call(ctx, "argsOnly", 3, "ok")
+	result, err := hsm.Call(ctx, sm, "argsOnly", 3, "ok")
 	if err != nil {
 		t.Fatal("argsOnly error", "err", err)
 	}
 	if result != "3:ok" {
 		t.Fatal("argsOnly result mismatch", "result", result)
 	}
-	result, err = sm.Call(ctx, "ctxOnly")
+	result, err = hsm.Call(ctx, sm, "ctxOnly")
 	if err != nil {
 		t.Fatal("ctxOnly error", "err", err)
 	}
 	if result != "ctx-ok" {
 		t.Fatal("ctxOnly result mismatch", "result", result)
 	}
-	result, err = sm.Call(ctx, "instanceOnly")
+	result, err = hsm.Call(ctx, sm, "instanceOnly")
 	if err != nil {
 		t.Fatal("instanceOnly error", "err", err)
 	}
 	if result != "instance" {
 		t.Fatal("instanceOnly result mismatch", "result", result)
 	}
-	result, err = sm.Call(ctx, "methodExpr", "x")
+	result, err = hsm.Call(ctx, sm, "methodExpr", "x")
 	if err != nil {
 		t.Fatal("methodExpr error", "err", err)
 	}
 	if result != "method:x" {
 		t.Fatal("methodExpr result mismatch", "result", result)
 	}
-	result, err = sm.Call(ctx, "variadic", "sum", 1, 2, 3)
+	result, err = hsm.Call(ctx, sm, "variadic", "sum", 1, 2, 3)
 	if err != nil {
 		t.Fatal("variadic error", "err", err)
 	}
 	if result != 6 {
 		t.Fatal("variadic result mismatch", "result", result)
 	}
-	_, err = sm.Call(ctx, "errorOnly")
+	_, err = hsm.Call(ctx, sm, "errorOnly")
 	if !errors.Is(err, opErr) {
 		t.Fatal("errorOnly error mismatch", "err", err)
 	}
-	_, err = sm.Call(ctx, "argsOnly", "bad", "ok")
+	_, err = hsm.Call(ctx, sm, "argsOnly", "bad", "ok")
 	if !errors.Is(err, hsm.ErrInvalidOperation) {
 		t.Fatal("expected invalid operation error for bad args", "err", err)
 	}
-	_, err = sm.Call(ctx, "missing")
+	_, err = hsm.Call(ctx, sm, "missing")
 	if !errors.Is(err, hsm.ErrMissingOperation) {
 		t.Fatal("expected missing operation error", "err", err)
 	}
-	_, err = sm.Call(ctx, "")
+	_, err = hsm.Call(ctx, sm, "")
 	if !errors.Is(err, hsm.ErrInvalidOperation) {
 		t.Fatal("expected invalid operation error for empty name", "err", err)
 	}
@@ -1265,7 +1360,7 @@ func TestCallValidation(t *testing.T) {
 			hsm.Initial(hsm.Target("s")),
 		)
 		sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
-		result, err := sm.Call(context.Background(), "bad/name")
+		result, err := hsm.Call(context.Background(), sm, "bad/name")
 		if err != nil || result != "ok" {
 			t.Fatal("expected slashed operation call to succeed", "result", result, "err", err)
 		}
@@ -1314,7 +1409,7 @@ func TestCallValidation(t *testing.T) {
 			hsm.Initial(hsm.Target("s")),
 		)
 		sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
-		_, err := sm.Call(context.Background(), "bad/name")
+		_, err := hsm.Call(context.Background(), sm, "bad/name")
 		if err != nil {
 			t.Fatal("expected slashed OnCall to succeed", "err", err)
 		}
