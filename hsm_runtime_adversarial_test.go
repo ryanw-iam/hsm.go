@@ -1,0 +1,226 @@
+package hsm_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stateforward/hsm.go"
+)
+
+func TestRuntimeAdversarial(t *testing.T) {
+	t.Run("concurrent_behavior_panics_dispatch_error_event_and_stop_settles", func(t *testing.T) {
+		recorder := newErrorEventRecorder()
+		activityStarted := make(chan struct{})
+		releasePanic := make(chan struct{})
+
+		model := hsm.Define(
+			"ConcurrentBehaviorPanicAdversarialHSM",
+			hsm.Initial(hsm.Target("running")),
+			hsm.State("running",
+				hsm.Activity(func(ctx context.Context, sm *THSM, event hsm.Event) {
+					close(activityStarted)
+					<-releasePanic
+					panic("concurrent boom")
+				}),
+			),
+			hsm.State("failed"),
+			hsm.Transition(
+				hsm.On(hsm.ErrorEvent),
+				hsm.Source("running"),
+				hsm.Target("failed"),
+				hsm.Effect(recorder.effect),
+			),
+		)
+
+		sm := hsm.Started(context.Background(), &THSM{}, &model)
+		awaitWaiter(t, "concurrent panic activity start", activityStarted)
+
+		errorProcessed := hsm.AfterProcess(sm.Context(), sm, hsm.ErrorEvent)
+		failedEntered := hsm.AfterEntry(sm.Context(), sm, "/ConcurrentBehaviorPanicAdversarialHSM/failed")
+
+		close(releasePanic)
+		awaitWaiter(t, "concurrent panic error processing", errorProcessed)
+		awaitWaiter(t, "concurrent panic failed entry", failedEntered)
+
+		err := recorder.await(t, "concurrent behavior panic")
+		if !strings.Contains(err.Error(), "panic in concurrent behavior /ConcurrentBehaviorPanicAdversarialHSM/running/") {
+			t.Fatalf("expected concurrent panic error path, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "concurrent boom") {
+			t.Fatalf("expected concurrent panic message, got %v", err)
+		}
+		if sm.State() != "/ConcurrentBehaviorPanicAdversarialHSM/failed" {
+			t.Fatalf("expected failed state after concurrent panic, got %s", sm.State())
+		}
+
+		awaitWaiter(t, "concurrent panic stop", hsm.Stop(context.Background(), sm))
+	})
+
+	t.Run("processing_panic_dispatches_error_event_and_machine_remains_live", func(t *testing.T) {
+		recorder := newErrorEventRecorder()
+		boomEvent := hsm.Event{Name: "boom"}
+		recoverEvent := hsm.Event{Name: "recover"}
+
+		model := hsm.Define(
+			"ProcessingPanicAdversarialHSM",
+			hsm.Initial(hsm.Target("idle")),
+			hsm.State("idle",
+				hsm.Transition(
+					hsm.On(boomEvent),
+					hsm.Target("../unreachable"),
+					hsm.Guard(func(ctx context.Context, sm *THSM, event hsm.Event) bool {
+						panic("processing boom")
+					}),
+				),
+			),
+			hsm.State("failed",
+				hsm.Transition(
+					hsm.On(recoverEvent),
+					hsm.Target("../recovered"),
+				),
+			),
+			hsm.State("recovered"),
+			hsm.State("unreachable"),
+			hsm.Transition(
+				hsm.On(hsm.ErrorEvent),
+				hsm.Source("idle"),
+				hsm.Target("failed"),
+				hsm.Effect(recorder.effect),
+			),
+		)
+
+		sm := hsm.Started(context.Background(), &THSM{}, &model)
+		errorProcessed := hsm.AfterProcess(sm.Context(), sm, hsm.ErrorEvent)
+		failedEntered := hsm.AfterEntry(sm.Context(), sm, "/ProcessingPanicAdversarialHSM/failed")
+
+		awaitWaiter(t, "processing panic dispatch", hsm.Dispatch(sm.Context(), sm, boomEvent))
+		awaitWaiter(t, "processing panic error processing", errorProcessed)
+		awaitWaiter(t, "processing panic failed entry", failedEntered)
+
+		err := recorder.await(t, "processing panic")
+		if !strings.Contains(err.Error(), "panic while processing event in state machine: processing boom") {
+			t.Fatalf("expected processing panic error, got %v", err)
+		}
+		if sm.State() != "/ProcessingPanicAdversarialHSM/failed" {
+			t.Fatalf("expected failed state after processing panic, got %s", sm.State())
+		}
+
+		recoveredEntered := hsm.AfterEntry(sm.Context(), sm, "/ProcessingPanicAdversarialHSM/recovered")
+		awaitWaiter(t, "processing panic recovery dispatch", hsm.Dispatch(sm.Context(), sm, recoverEvent))
+		awaitWaiter(t, "processing panic recovered entry", recoveredEntered)
+
+		if sm.State() != "/ProcessingPanicAdversarialHSM/recovered" {
+			t.Fatalf("expected recovered state after post-failure dispatch, got %s", sm.State())
+		}
+	})
+
+	t.Run("stop_timeout_dispatches_error_event_with_injected_clock", func(t *testing.T) {
+		harness := newDeterministicClockHarness()
+		recorder := newErrorEventRecorder()
+		activityStarted := make(chan struct{})
+		releaseActivity := make(chan struct{})
+
+		t.Cleanup(func() {
+			close(releaseActivity)
+		})
+
+		model := hsm.Define(
+			"TerminateTimeoutAdversarialHSM",
+			hsm.Initial(hsm.Target("running")),
+			hsm.State("running",
+				hsm.Activity(func(ctx context.Context, sm *THSM, event hsm.Event) {
+					close(activityStarted)
+					<-releaseActivity
+				}),
+			),
+			hsm.Transition(
+				hsm.On(hsm.ErrorEvent),
+				hsm.Effect(recorder.effect),
+			),
+		)
+
+		sm := hsm.Started(
+			context.Background(),
+			&THSM{},
+			&model,
+			hsm.Config{
+				Clock:           harness.Clock(),
+				ActivityTimeout: 5 * time.Second,
+			},
+		)
+		awaitWaiter(t, "terminate timeout activity start", activityStarted)
+
+		errorProcessed := hsm.AfterProcess(sm.Context(), sm, hsm.ErrorEvent)
+		stopCompleted := hsm.Stop(context.Background(), sm)
+
+		registration := harness.awaitRegistration(t, "terminate timeout adversarial")
+		if registration.kind != "after" {
+			t.Fatalf("expected terminate timeout to use clock.After, got %s", registration.kind)
+		}
+		if registration.requested != 5*time.Second {
+			t.Fatalf("expected terminate timeout duration %v, got %v", 5*time.Second, registration.requested)
+		}
+		assertWaiterPending(t, "terminate timeout stop before injected timeout", stopCompleted)
+
+		registration.trigger(t)
+		awaitWaiter(t, "terminate timeout stop completion", stopCompleted)
+		awaitWaiter(t, "terminate timeout error processing", errorProcessed)
+
+		err := recorder.await(t, "terminate timeout")
+		if !strings.Contains(err.Error(), "terminate timeout: /TerminateTimeoutAdversarialHSM/running/") {
+			t.Fatalf("expected terminate timeout error, got %v", err)
+		}
+		select {
+		case <-sm.Context().Done():
+		default:
+			t.Fatal("expected machine context to be done after terminate timeout stop")
+		}
+	})
+}
+
+func TestPublicHelperAdversarial(t *testing.T) {
+	nilCtx := context.Context(nil)
+	hostileEvent := hsm.Event{Name: "hostile"}
+
+	t.Run("nil_instance_dispatch_and_set_close_immediately", func(t *testing.T) {
+		assertWaiterClosed(t, "dispatch with nil instance", hsm.Dispatch(context.Background(), nil, hostileEvent))
+		assertWaiterClosed(t, "set with nil instance", hsm.Set(context.Background(), nil, "hostile", 1))
+	})
+
+	t.Run("missing_context_call_returns_missing_hsm", func(t *testing.T) {
+		_, err := hsm.Call(context.Background(), nil, "missing")
+		if !errors.Is(err, hsm.ErrMissingHSM) {
+			t.Fatalf("expected ErrMissingHSM for missing context call, got %v", err)
+		}
+	})
+
+	t.Run("typed_nil_context_helpers_do_not_panic", func(t *testing.T) {
+		assertNoPanic(t, "dispatch with typed nil context", func() {
+			assertWaiterClosed(t, "dispatch with typed nil context", hsm.Dispatch(nilCtx, nil, hostileEvent))
+		})
+		assertNoPanic(t, "set with typed nil context", func() {
+			assertWaiterClosed(t, "set with typed nil context", hsm.Set(nilCtx, nil, "hostile", 1))
+		})
+		assertNoPanic(t, "dispatch all with typed nil context", func() {
+			assertWaiterClosed(t, "dispatch all with typed nil context", hsm.DispatchAll(nilCtx, hostileEvent))
+		})
+		assertNoPanic(t, "dispatch to with typed nil context", func() {
+			assertWaiterClosed(t, "dispatch to with typed nil context", hsm.DispatchTo[string](nilCtx, hostileEvent, "alpha"))
+		})
+		assertNoPanic(t, "call with typed nil context", func() {
+			_, err := hsm.Call(nilCtx, nil, "missing")
+			if !errors.Is(err, hsm.ErrMissingHSM) {
+				t.Fatalf("expected ErrMissingHSM for typed nil context call, got %v", err)
+			}
+		})
+	})
+
+	t.Run("nil_stop_panic_remains_characterized", func(t *testing.T) {
+		assertPanicContains(t, "Stop nil hsm", "invalid memory address", func() {
+			hsm.Stop(context.Background(), nil)
+		})
+	})
+}
