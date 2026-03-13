@@ -2,16 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
+current_phase: 2 of 5 (Deterministic Runtime Semantics)
+current_plan: 2
 status: executing
-stopped_at: Completed 02-deterministic-runtime-semantics-01-PLAN.md
-last_updated: "2026-03-13T03:38:09.196Z"
-last_activity: 2026-03-13 - Completed 02-01 deterministic timer harness and focused runtime timer semantics coverage; ready for 02-02
+stopped_at: Completed 02-deterministic-runtime-semantics-02-PLAN.md
+last_updated: "2026-03-13T03:48:17.289Z"
+last_activity: 2026-03-13 - Completed 02-02 deterministic concurrency and multi-instance runtime semantics coverage; ready for 02-03
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 6
-  completed_plans: 4
-  percent: 67
+  completed_plans: 5
+  percent: 83
 ---
 
 # Project State
@@ -25,33 +27,34 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 
 ## Current Position
 
-Phase: 2 of 5 (Deterministic Runtime Semantics)
-Plan: 1 of 3 completed in current phase
-Status: In progress
-Last activity: 2026-03-13 - Completed 02-01 deterministic timer harness and focused runtime timer semantics coverage; ready for 02-02
+Current Phase: 2 of 5 (Deterministic Runtime Semantics)
+Current Plan: 2
+Total Plans in Phase: 3
+Status: Ready to execute
+Last Activity: 2026-03-13 - Completed 02-02 deterministic concurrency and multi-instance runtime semantics coverage; ready for 02-03
 
-Progress: [███████░░░] 67%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 24 min
-- Total execution time: 1h 34m
+- Total plans completed: 5
+- Average duration: 20 min
+- Total execution time: 1h 41m
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 | 3 | 90 min | 30 min |
-| 2 | 1 | 4 min | 4 min |
+| 2 | 2 | 11 min | 6 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01, 01-02, 01-03, 02-01
+- Last 5 plans: 01-01, 01-02, 01-03, 02-01, 02-02
 - Trend: Improving
 
 **Latest Metric:**
-- Phase 02-deterministic-runtime-semantics P01 | 4 min | 2 tasks | 3 files
+- Phase 02-deterministic-runtime-semantics P02 | 7 min | 2 tasks | 3 files
 
 ## Accumulated Context
 
@@ -68,6 +71,8 @@ Recent decisions affecting current work:
 - Root `hsm` path coverage now expands through focused `*_paths_test.go` files plus waiter-based timing assertions instead of a single opaque test file.
 - [Phase 02-deterministic-runtime-semantics]: Deterministic timer tests now park real timers and trigger them explicitly instead of relying on wall-clock sleeps.
 - [Phase 02-deterministic-runtime-semantics]: Timer semantics now live in a dedicated root runtime suite that separates Config.Clock precedence from DefaultClock fallback coverage.
+- [Phase 02-deterministic-runtime-semantics]: Concurrent dispatch assertions validate serialized start/end pairs and stable settled state instead of enqueue winner order.
+- [Phase 02-deterministic-runtime-semantics]: Broadcast and targeted dispatch coverage now uses per-instance waiters and IDs so sync.Map iteration order is never part of the test contract.
 
 ### Pending Todos
 
@@ -79,6 +84,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T03:38:09.194Z
-Stopped at: Completed 02-deterministic-runtime-semantics-01-PLAN.md
-Resume file: .planning/phases/02-deterministic-runtime-semantics/02-02-PLAN.md
+Last session: 2026-03-13T03:48:17.287Z
+Stopped at: Completed 02-deterministic-runtime-semantics-02-PLAN.md
+Resume file: .planning/phases/02-deterministic-runtime-semantics/02-03-PLAN.md
