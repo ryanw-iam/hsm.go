@@ -18,8 +18,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
-          check-latest: true
+          go-version-file: go.mod
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -31,10 +30,5 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Run tests
-        id: regular_tests
-        run: go test -v ./...
-
-      - name: Run tests with race detection
-        id: race_tests
-        run: go test -race -short ./...
+      - name: Run canonical workspace gate
+        run: bash scripts/verify-workspace.sh
