@@ -3298,6 +3298,9 @@ func DispatchAll(ctx context.Context, event Event) <-chan struct{} {
 }
 
 func DispatchTo[T stringLike](ctx context.Context, event Event, maybeIds ...T) <-chan struct{} {
+	if ctx == nil {
+		return closedChannel
+	}
 	instances, ok := ctx.Value(Keys.Instances).(*sync.Map)
 	if !ok || instances == nil {
 		return closedChannel
@@ -3383,6 +3386,9 @@ func AfterExecuted[T stringLike](ctx context.Context, hsm Instance, state T) <-c
 //	    log.Printf("Current state: %s", sm.State())
 //	}
 func FromContext(ctx context.Context) (Instance, bool) {
+	if ctx == nil {
+		return nil, false
+	}
 	hsm, ok := ctx.Value(Keys.HSM).(Instance)
 	if ok {
 		return hsm, true
@@ -3395,6 +3401,9 @@ func FromContext(ctx context.Context) (Instance, bool) {
 // This is useful when multiple state machines share a context and you need
 // to access or iterate over all of them.
 func InstancesFromContext(ctx context.Context) ([]Instance, bool) {
+	if ctx == nil {
+		return nil, false
+	}
 	instancesPointer, ok := ctx.Value(Keys.Instances).(*sync.Map)
 	if !ok || instancesPointer == nil {
 		return nil, false
