@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 3 of 5 (Rules Conformance Matrix)
-current_plan: 1
+current_plan: 2
 status: ready_to_execute
-stopped_at: Completed 03-rules-conformance-matrix-01-PLAN.md
-last_updated: "2026-03-13T18:03:25.346Z"
-last_activity: 2026-03-13 - Completed 03-01 with the checked-in rules matrix and shared conformance helper contract
+stopped_at: Completed 03-rules-conformance-matrix-02-PLAN.md
+last_updated: "2026-03-13T18:13:55.596Z"
+last_activity: 2026-03-13 - Completed 03-02 with define-time model conformance coverage and tightened builder validation
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 10
-  completed_plans: 7
-  percent: 70
+  completed_plans: 8
+  percent: 80
 ---
 
 # Project State
@@ -28,19 +28,19 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 ## Current Position
 
 Current Phase: 3 of 5 (Rules Conformance Matrix)
-Current Plan: 1
+Current Plan: 2
 Total Plans in Phase: 4
 Status: Ready to execute
-Last Activity: 2026-03-13 - Completed 03-01; 03-02 is the next execution target
+Last Activity: 2026-03-13 - Completed 03-02; 03-03 is the next execution target
 
-Progress: [███████░░░] 70%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
-- Average duration: 17 min
-- Total execution time: 2h 0m
+- Total plans completed: 8
+- Average duration: 15 min
+- Total execution time: 2h 3m
 
 **By Phase:**
 
@@ -48,14 +48,14 @@ Progress: [███████░░░] 70%
 |-------|-------|-------|----------|
 | 1 | 3 | 90 min | 30 min |
 | 2 | 3 | 18 min | 6 min |
-| 3 | 1 | 12 min | 12 min |
+| 3 | 2 | 15 min | 8 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-03, 02-01, 02-02, 02-03, 03-01
+- Last 5 plans: 02-01, 02-02, 02-03, 03-01, 03-02
 - Trend: Improving
 
 **Latest Metric:**
-- Phase 03-rules-conformance-matrix P01 | 12 min | 2 tasks | 2 files
+- Phase 03-rules-conformance-matrix P02 | 3 min | 1 task | 3 files
 
 ## Accumulated Context
 
@@ -78,6 +78,8 @@ Recent decisions affecting current work:
 - [Phase 02-deterministic-runtime-semantics]: Stop now resumes queued lifecycle event processing after shutdown lock release so termination timeout errors remain observable under the race gate.
 - [Phase 03-rules-conformance-matrix]: The rules matrix now classifies every HSM rule by honest enforcement type instead of forcing fake negative coverage.
 - [Phase 03-rules-conformance-matrix]: Define-time conformance helpers should assert stable panic substrings rather than full traceback strings.
+- [Phase 03-rules-conformance-matrix]: The model conformance suite follows the checked-in define_panic matrix rows one-to-one through TestModelRulesConformance/HSMxx/... targets.
+- [Phase 03-rules-conformance-matrix]: Legacy fixtures were updated to conform to HSM20 instead of preserving the old source-only top-level transition loophole.
 
 ### Pending Todos
 
@@ -89,6 +91,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T18:03:25.346Z
-Stopped at: Completed 03-rules-conformance-matrix-01-PLAN.md
-Resume file: .planning/phases/03-rules-conformance-matrix/03-02-PLAN.md
+Last session: 2026-03-13T18:13:30.286Z
+Stopped at: Completed 03-rules-conformance-matrix-02-PLAN.md
+Resume file: .planning/phases/03-rules-conformance-matrix/03-03-PLAN.md

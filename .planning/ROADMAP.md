@@ -64,7 +64,7 @@ Plans:
 
 Plans:
 - [x] `03-01-PLAN.md` - Publish the checked-in rules matrix and shared conformance helper contract.
-- [ ] `03-02-PLAN.md` - Build the dedicated define/build-time conformance suite for invalid models.
+- [x] `03-02-PLAN.md` - Build the dedicated define/build-time conformance suite for invalid models.
 - [ ] `03-03-PLAN.md` - Build the deterministic runtime/exemplar conformance suite for semantic and exemplar rules.
 - [ ] `03-04-PLAN.md` - Reconcile matrix evidence to the implemented suites and prove the full canonical gate.
 
@@ -104,6 +104,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Coverage Baseline And Release Gates | 3/3 | Complete | 2026-03-13 |
 | 2. Deterministic Runtime Semantics | 3/3 | Complete | 2026-03-13 |
-| 3. Rules Conformance Matrix | 1/4 | In Progress | - |
+| 3. Rules Conformance Matrix | 2/4 | In Progress | - |
 | 4. Adversarial Regression Matrix | 0/TBD | Not started | - |
 | 5. Hardening Remediation Closure | 0/TBD | Not started | - |
