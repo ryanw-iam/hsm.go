@@ -48,7 +48,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] `02-01-PLAN.md` - Build deterministic timer and waiter harnesses, then move timer-driven runtime assertions into focused suites.
+- [x] `02-01-PLAN.md` - Build deterministic timer and waiter harnesses, then move timer-driven runtime assertions into focused suites.
 - [ ] `02-02-PLAN.md` - Add deterministic concurrent dispatch, queue-ordering, and multi-instance targeting coverage.
 - [ ] `02-03-PLAN.md` - Lock lifecycle timeout and restart semantics behind deterministic tests and close the race-enabled gate.
 
@@ -100,7 +100,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Coverage Baseline And Release Gates | 3/3 | Complete | 2026-03-13 |
-| 2. Deterministic Runtime Semantics | 0/3 | Next | - |
+| 2. Deterministic Runtime Semantics | 1/3 | In Progress | - |
 | 3. Rules Conformance Matrix | 0/TBD | Not started | - |
 | 4. Adversarial Regression Matrix | 0/TBD | Not started | - |
 | 5. Hardening Remediation Closure | 0/TBD | Not started | - |

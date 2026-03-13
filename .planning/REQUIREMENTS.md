@@ -13,7 +13,7 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 
 ### Runtime Determinism
 
-- [ ] **VER-03**: Add deterministic validation for concurrency, timing, dispatch ordering, and race-sensitive behavior.
+- [x] **VER-03**: Add deterministic validation for concurrency, timing, dispatch ordering, and race-sensitive behavior.
 
 ### Rules Conformance
 
@@ -33,7 +33,7 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 |-------------|-------|--------|
 | VER-01 | Phase 1 | Complete |
 | VER-02 | Phase 1 | Complete |
-| VER-03 | Phase 2 | Pending |
+| VER-03 | Phase 2 | Complete |
 | VER-04 | Phase 3 | Pending |
 | VER-05 | Phase 4 | Pending |
 | VER-06 | Phase 5 | Pending |

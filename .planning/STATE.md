@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: ready_to_execute
-stopped_at: Phase 2 planned and ready for execution
-last_updated: "2026-03-13T04:30:00Z"
-last_activity: 2026-03-13 - Phase 2 planned: deterministic timer harness, concurrency semantics, and lifecycle race-gate closeout are ready for execution
+status: executing
+stopped_at: Completed 02-deterministic-runtime-semantics-01-PLAN.md
+last_updated: "2026-03-13T03:38:09.196Z"
+last_activity: 2026-03-13 - Completed 02-01 deterministic timer harness and focused runtime timer semantics coverage; ready for 02-02
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 6
-  completed_plans: 3
-  percent: 20
+  completed_plans: 4
+  percent: 67
 ---
 
 # Project State
@@ -26,28 +26,32 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 ## Current Position
 
 Phase: 2 of 5 (Deterministic Runtime Semantics)
-Plan: 0 of 3 in current phase
-Status: Ready to execute
-Last activity: 2026-03-13 - Phase 2 planning completed; execution can begin on 02-01
+Plan: 1 of 3 completed in current phase
+Status: In progress
+Last activity: 2026-03-13 - Completed 02-01 deterministic timer harness and focused runtime timer semantics coverage; ready for 02-02
 
-Progress: [██░░░░░░░░] 20%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
-- Average duration: 30 min
-- Total execution time: 1.5 hours
+- Total plans completed: 4
+- Average duration: 24 min
+- Total execution time: 1h 34m
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 | 3 | 90 min | 30 min |
+| 2 | 1 | 4 min | 4 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01, 01-02, 01-03
+- Last 5 plans: 01-01, 01-02, 01-03, 02-01
 - Trend: Improving
+
+**Latest Metric:**
+- Phase 02-deterministic-runtime-semantics P01 | 4 min | 2 tasks | 3 files
 
 ## Accumulated Context
 
@@ -62,6 +66,8 @@ Recent decisions affecting current work:
 - The canonical verification entrypoint is `bash scripts/verify-workspace.sh`, and release workflows must call it rather than duplicating test commands.
 - The default `muid.Make()` path now prioritizes global monotonic ordering so workspace-wide release verification stays trustworthy.
 - Root `hsm` path coverage now expands through focused `*_paths_test.go` files plus waiter-based timing assertions instead of a single opaque test file.
+- [Phase 02-deterministic-runtime-semantics]: Deterministic timer tests now park real timers and trigger them explicitly instead of relying on wall-clock sleeps.
+- [Phase 02-deterministic-runtime-semantics]: Timer semantics now live in a dedicated root runtime suite that separates Config.Clock precedence from DefaultClock fallback coverage.
 
 ### Pending Todos
 
@@ -69,10 +75,10 @@ None.
 
 ### Blockers/Concerns
 
-None at Phase 1 close.
+None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T04:30:00Z
-Stopped at: Phase 2 planned and ready for execution
-Resume file: .planning/ROADMAP.md
+Last session: 2026-03-13T03:38:09.194Z
+Stopped at: Completed 02-deterministic-runtime-semantics-01-PLAN.md
+Resume file: .planning/phases/02-deterministic-runtime-semantics/02-02-PLAN.md
