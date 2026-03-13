@@ -470,9 +470,11 @@ func TestModelRulesConformance(t *testing.T) {
 						fmt.Sprintf("BadTimeTriggerSource_%s", tc.name),
 						hsm.State("parent",
 							hsm.State("idle"),
-							hsm.Initial(
-								tc.add,
-								hsm.Target("idle"),
+							hsm.Choice("branch",
+								hsm.Transition(
+									tc.add,
+									hsm.Target("../idle"),
+								),
 							),
 						),
 						hsm.Initial(hsm.Target("parent")),

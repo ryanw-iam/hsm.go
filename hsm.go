@@ -316,12 +316,14 @@ type paths struct {
 
 type transition struct {
 	element
-	source string
-	target string
-	guard  string
-	effect []string
-	events []string
-	paths  map[string]paths
+	source    string
+	target    string
+	hasSource bool
+	hasTarget bool
+	guard     string
+	effect    []string
+	events    []string
+	paths     map[string]paths
 }
 
 func (transition *transition) Guard() string {
@@ -928,7 +930,7 @@ func Transition[T redefinableOrString](nameOrPartialElement T, partialElements .
 			}
 		} else {
 			model.push(func(model *Model, stack []Element) Element {
-				if transition.source == model.QualifiedName() && transition.target != "" {
+				if owner.QualifiedName() == model.QualifiedName() && transition.hasSource != transition.hasTarget {
 					traceback(fmt.Errorf("top level transitions must have a source and target, or no source and target"))
 				}
 				if kind.Is(transition.kind, InternalKind) && len(transition.effect) == 0 {
@@ -1009,6 +1011,7 @@ func Source[T redefinableOrString](nameOrPartialElement T) RedefinableElement {
 			})
 		}
 		transition.source = name
+		transition.hasSource = true
 		return owner
 	}
 }
@@ -1023,8 +1026,8 @@ func Defer[T interface {
 }](events ...T) RedefinableElement {
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
-		state, ok := find(stack, StateKind).(*state)
-		if !ok {
+		state, ok := stack[len(stack)-1].(*state)
+		if !ok || !kind.Is(state.Kind(), StateKind) {
 			traceback(fmt.Errorf("defer must be called within a State"))
 		}
 		for _, event := range events {
@@ -1089,6 +1092,7 @@ func Target[T redefinableOrString](nameOrPartialElement T) RedefinableElement {
 		}
 
 		transition.target = qualifiedName
+		transition.hasTarget = true
 		return transition
 	}
 }
@@ -1323,8 +1327,8 @@ func ShallowHistory[T redefinableOrString](elementOrName T, partialElements ...R
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
 		owner := find(stack, StateKind)
-		if owner == nil {
-			traceback(fmt.Errorf("you must call ShallowHistory() within a State"))
+		if owner == nil || owner.QualifiedName() == model.qualifiedName {
+			traceback(fmt.Errorf("you must call ShallowHistory() within a nested State"))
 		}
 		if name == "" {
 			name = fmt.Sprintf("shallow_history_%d", len(model.elements))
@@ -1351,8 +1355,8 @@ func DeepHistory[T redefinableOrString](elementOrName T, partialElements ...Rede
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
 		owner := find(stack, StateKind)
-		if owner == nil {
-			traceback(fmt.Errorf("you must call DeepHistory() within a State"))
+		if owner == nil || owner.QualifiedName() == model.qualifiedName {
+			traceback(fmt.Errorf("you must call DeepHistory() within a nested State"))
 		}
 		if name == "" {
 			name = fmt.Sprintf("deep_history_%d", len(model.elements))
@@ -1379,8 +1383,8 @@ func DeepHistory[T redefinableOrString](elementOrName T, partialElements ...Rede
 func Entry[T Instance](funcs ...func(ctx context.Context, hsm T, event Event)) RedefinableElement {
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
-		owner := find(stack, StateKind).(*state)
-		if owner == nil {
+		owner, ok := stack[len(stack)-1].(*state)
+		if !ok || !kind.Is(owner.Kind(), StateKind) {
 			traceback(fmt.Errorf("entry must be called within a State"))
 		}
 		for _, fn := range funcs {
@@ -1414,8 +1418,8 @@ func Entry[T Instance](funcs ...func(ctx context.Context, hsm T, event Event)) R
 func Activity[T Instance](funcs ...func(ctx context.Context, hsm T, event Event)) RedefinableElement {
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
-		owner, ok := find(stack, StateKind).(*state)
-		if !ok {
+		owner, ok := stack[len(stack)-1].(*state)
+		if !ok || !kind.Is(owner.Kind(), StateKind) {
 			traceback(fmt.Errorf("activity must be called within a State"))
 		}
 		for _, fn := range funcs {
@@ -1442,8 +1446,8 @@ func Activity[T Instance](funcs ...func(ctx context.Context, hsm T, event Event)
 func Exit[T Instance](funcs ...func(ctx context.Context, hsm T, event Event)) RedefinableElement {
 	traceback := traceback()
 	return func(model *Model, stack []Element) Element {
-		owner, ok := find(stack, StateKind).(*state)
-		if !ok {
+		owner, ok := stack[len(stack)-1].(*state)
+		if !ok || !kind.Is(owner.Kind(), StateKind) {
 			traceback(fmt.Errorf("exit must be called within a State"))
 		}
 		for _, fn := range funcs {

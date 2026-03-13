@@ -121,6 +121,13 @@ func TestComplex(t *testing.T) {
 				hsm.Activity(mockAction("s3.activity", true)),
 				hsm.Exit(mockAction("s3.exit", false)),
 			),
+			hsm.Transition(hsm.On(iEvent), hsm.Effect(mockAction("s.I.transition.effect", false)), hsm.Guard(
+				func(ctx context.Context, hsm *THSM, event hsm.Event) bool {
+					check := hsm.foo == 0
+					hsm.foo++
+					return check
+				},
+			)),
 			// Wildcard events are no longer supported
 			// hsm.Transition(hsm.On(`*.P.*`), hsm.Effect(mockAction("s11.P.transition.effect", false))),
 		),
@@ -165,13 +172,6 @@ func TestComplex(t *testing.T) {
 		hsm.Transition(hsm.On(cEvent), hsm.Source("/s/s1"), hsm.Target("/s/s2"), hsm.Effect(mockAction("s1.C.transition.effect", false))),
 		hsm.Transition(hsm.On(eEvent), hsm.Source("/s"), hsm.Target("/s/s1/s11"), hsm.Effect(mockAction("s.E.transition.effect", false))),
 		hsm.Transition(hsm.On(gEvent), hsm.Source("/s/s1/s11"), hsm.Target("/s/s2/s21/s211"), hsm.Effect(mockAction("s11.G.transition.effect", false))),
-		hsm.Transition(hsm.On(iEvent), hsm.Source("/s"), hsm.Effect(mockAction("s.I.transition.effect", false)), hsm.Guard(
-			func(ctx context.Context, hsm *THSM, event hsm.Event) bool {
-				check := hsm.foo == 0
-				hsm.foo++
-				return check
-			},
-		)),
 		hsm.Transition(hsm.After(
 			func(ctx context.Context, hsm *THSM, event hsm.Event) time.Duration {
 				return time.Second * 2
@@ -1974,6 +1974,9 @@ func BenchmarkModel(b *testing.B) {
 					hsm.Activity(noBehavior),
 					hsm.Exit(noBehavior),
 				),
+				hsm.Transition(hsm.On(iEvent), hsm.Effect(noBehavior), hsm.Guard(
+					noGuard,
+				)),
 				// Wildcard events are no longer supported
 			// hsm.Transition(hsm.On(`*.P.*`), hsm.Effect(noBehavior)),
 			),
@@ -2014,9 +2017,6 @@ func BenchmarkModel(b *testing.B) {
 			hsm.Transition(hsm.On(cEvent), hsm.Source("/s/s1"), hsm.Target("/s/s2"), hsm.Effect(noBehavior)),
 			hsm.Transition(hsm.On(eEvent), hsm.Source("/s"), hsm.Target("/s/s1/s11"), hsm.Effect(noBehavior)),
 			hsm.Transition(hsm.On(gEvent), hsm.Source("/s/s1/s11"), hsm.Target("/s/s2/s21/s211"), hsm.Effect(noBehavior)),
-			hsm.Transition(hsm.On(iEvent), hsm.Source("/s"), hsm.Effect(noBehavior), hsm.Guard(
-				noGuard,
-			)),
 			hsm.Transition(hsm.After(
 				func(ctx context.Context, hsm *THSM, event hsm.Event) time.Duration {
 					return time.Second * 2
