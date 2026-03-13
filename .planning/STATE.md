@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 4 of 5 (Adversarial Regression Matrix)
 current_plan: 3
-status: executing
-stopped_at: Completed 04-adversarial-regression-matrix-01-PLAN.md
-last_updated: "2026-03-13T21:09:53.409Z"
+status: ready_for_verification
+stopped_at: Completed 04-03-PLAN.md
+last_updated: "2026-03-13T21:16:40.735Z"
 last_activity: 2026-03-13
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 13
-  completed_plans: 12
-  percent: 92
+  completed_plans: 13
+  percent: 100
 ---
 
 # Project State
@@ -30,17 +30,17 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 Current Phase: 4 of 5 (Adversarial Regression Matrix)
 Current Plan: 3
 Total Plans in Phase: 3
-Status: Executing
+Status: Ready For Verification
 Last Activity: 2026-03-13
 
-Progress: [█████████░] 92%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 11
-- Average duration: 12 min
-- Total execution time: 2h 16m
+- Total plans completed: 13
+- Average duration: 11 min
+- Total execution time: 2h 19m
 
 **By Phase:**
 
@@ -49,15 +49,18 @@ Progress: [█████████░] 92%
 | 1 | 3 | 90 min | 30 min |
 | 2 | 3 | 18 min | 6 min |
 | 3 | 4 | 26 min | 6 min |
+| 4 | 3 | 9 min | 3 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-01, 03-02, 03-03, 03-04, 04-02
+- Last 5 plans: 03-03, 03-04, 04-01, 04-02, 04-03
 - Trend: Improving
 
 **Latest Metric:**
-- Phase 04-adversarial-regression-matrix P02 | 2 min | 2 tasks | 6 files
+- Phase 04-adversarial-regression-matrix P03 | 3 min | 2 tasks | 3 files
+| Phase 04-adversarial-regression-matrix P03 | 3 min | 2 tasks | 3 files |
 | Phase 04-adversarial-regression-matrix P02 | 2 min | 2 tasks | 6 files |
 | Phase 04-adversarial-regression-matrix P01 | 4 min | 2 tasks | 3 files |
+| Phase 04-adversarial-regression-matrix P03 | 3 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -90,6 +93,8 @@ Recent decisions affecting current work:
 - [Phase 04-adversarial-regression-matrix]: Model root HSM properties as a fixed reducer and force MUID boundary states inside the test instead of relying on open-ended fuzz exploration.
 - [Phase 04-adversarial-regression-matrix]: Typed-nil helper contexts should collapse to the existing missing-context contract instead of panicking in context lookups.
 - [Phase 04-adversarial-regression-matrix]: Adversarial runtime evidence should reuse ErrorEvent transitions, waiter channels, and the deterministic clock harness rather than introducing a second fault runner.
+- [Phase 04-adversarial-regression-matrix]: Keep root Dispatch and Set regression contracts at measured allocation ceilings instead of wall-clock performance thresholds.
+- [Phase 04-adversarial-regression-matrix]: Run benchmark smoke in the canonical verifier with fixed 20-iteration benchmem checks on the existing root and muid benchmark names.
 
 ### Pending Todos
 
@@ -101,6 +106,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T21:09:07.486Z
-Stopped at: Completed 04-adversarial-regression-matrix-01-PLAN.md
+Last session: 2026-03-13T21:16:40.732Z
+Stopped at: Completed 04-03-PLAN.md
 Resume file: None

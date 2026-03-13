@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Coverage Baseline And Release Gates** - Establish exhaustive path coverage and make core verification mandatory for shipping. Completed 2026-03-13.
 - [x] **Phase 2: Deterministic Runtime Semantics** - Prove concurrency, timing, ordering, and race-sensitive behavior deterministically. Completed 2026-03-13.
 - [x] **Phase 3: Rules Conformance Matrix** - Turn `rules.md` into executable conformance checks for valid and invalid models. (completed 2026-03-13)
-- [ ] **Phase 4: Adversarial Regression Matrix** - Add fault injection, fuzz/property checks, and compatibility/performance regression coverage.
+- [x] **Phase 4: Adversarial Regression Matrix** - Add fault injection, fuzz/property checks, and compatibility/performance regression coverage. Completed 2026-03-13.
 - [ ] **Phase 5: Hardening Remediation Closure** - Fix issues exposed by the new verification bar and close the release gate cleanly.
 
 ## Phase Details
@@ -80,9 +80,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] `04-01-PLAN.md` - Add deterministic fault-injection coverage for hostile runtime and public-helper failures.
+- [x] `04-01-PLAN.md` - Add deterministic fault-injection coverage for hostile runtime and public-helper failures.
 - [x] `04-02-PLAN.md` - Add bounded root and `muid` property checks with checked-in fuzz seeds.
-- [ ] `04-03-PLAN.md` - Add allocation and benchmark-smoke regression evidence, then wire the canonical adversarial gate.
+- [x] `04-03-PLAN.md` - Add allocation and benchmark-smoke regression evidence, then wire the canonical adversarial gate.
 
 ### Phase 5: Hardening Remediation Closure
 **Goal**: Issues exposed by the verification matrix are fixed and locked in as permanent regression coverage.
@@ -107,5 +107,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Coverage Baseline And Release Gates | 3/3 | Complete | 2026-03-13 |
 | 2. Deterministic Runtime Semantics | 3/3 | Complete | 2026-03-13 |
 | 3. Rules Conformance Matrix | 4/4 | Complete   | 2026-03-13 |
-| 4. Adversarial Regression Matrix | 2/3 | In Progress | - |
+| 4. Adversarial Regression Matrix | 3/3 | Complete | 2026-03-13 |
 | 5. Hardening Remediation Closure | 0/TBD | Not started | - |
