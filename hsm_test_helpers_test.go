@@ -1,11 +1,19 @@
 package hsm_test
 
 import (
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stateforward/hsm.go"
+)
+
+const (
+	waiterDeadline                 = 2 * time.Second
+	waiterShouldRemainPendingFor   = 25 * time.Millisecond
+	deterministicTimerParkingDelay = 24 * time.Hour
 )
 
 type Trace struct {
@@ -97,6 +105,131 @@ func (sm *CallSigHSM) hitsSnapshot() []string {
 func (sm *CallSigHSM) methodExpr(arg string) string {
 	sm.record("methodExpr")
 	return "method:" + arg
+}
+
+type deterministicClockHarness struct {
+	mutex         sync.Mutex
+	registrations []*timerRegistration
+	pending       chan *timerRegistration
+}
+
+type timerRegistration struct {
+	kind      string
+	requested time.Duration
+	timer     *time.Timer
+	after     chan time.Time
+}
+
+func newDeterministicClockHarness() *deterministicClockHarness {
+	return &deterministicClockHarness{
+		pending: make(chan *timerRegistration, 32),
+	}
+}
+
+func (h *deterministicClockHarness) Clock() hsm.Clock {
+	return hsm.Clock{
+		After:    h.After,
+		NewTimer: h.NewTimer,
+	}
+}
+
+func (h *deterministicClockHarness) After(duration time.Duration) <-chan time.Time {
+	registration := &timerRegistration{
+		kind:      "after",
+		requested: duration,
+		after:     make(chan time.Time, 1),
+	}
+	h.register(registration)
+	return registration.after
+}
+
+func (h *deterministicClockHarness) NewTimer(duration time.Duration) *time.Timer {
+	registration := &timerRegistration{
+		kind:      "timer",
+		requested: duration,
+		timer:     time.NewTimer(deterministicTimerParkingDelay),
+	}
+	h.register(registration)
+	return registration.timer
+}
+
+func (h *deterministicClockHarness) register(registration *timerRegistration) {
+	h.mutex.Lock()
+	h.registrations = append(h.registrations, registration)
+	h.mutex.Unlock()
+	h.pending <- registration
+}
+
+func (h *deterministicClockHarness) awaitRegistration(t *testing.T, description string) *timerRegistration {
+	t.Helper()
+	select {
+	case registration := <-h.pending:
+		return registration
+	case <-time.After(waiterDeadline):
+		t.Fatalf("timed out waiting for %s timer registration", description)
+		return nil
+	}
+}
+
+func (h *deterministicClockHarness) assertNoRegistration(t *testing.T, description string) {
+	t.Helper()
+	select {
+	case registration := <-h.pending:
+		t.Fatalf("unexpected %s timer registration for %s with duration %v", registration.kind, description, registration.requested)
+	case <-time.After(waiterShouldRemainPendingFor):
+	}
+}
+
+func (h *deterministicClockHarness) registrationCount() int {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+	return len(h.registrations)
+}
+
+func (r *timerRegistration) trigger(t *testing.T) {
+	t.Helper()
+	switch r.kind {
+	case "after":
+		select {
+		case r.after <- time.Now():
+		default:
+			t.Fatalf("after registration for duration %v already fired", r.requested)
+		}
+	case "timer":
+		deadline := time.After(waiterDeadline)
+		for {
+			if r.timer.Stop() {
+				r.timer.Reset(0)
+				return
+			}
+			select {
+			case <-deadline:
+				t.Fatalf("timed out waiting to trigger timer with duration %v", r.requested)
+			default:
+				runtime.Gosched()
+			}
+		}
+	default:
+		t.Fatalf("unknown timer registration kind %q", r.kind)
+	}
+}
+
+func awaitWaiter(t *testing.T, description string, waiter <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-waiter:
+	case <-time.After(waiterDeadline):
+		t.Fatalf("timed out waiting for %s", description)
+	}
+}
+
+func assertWaiterPending(t *testing.T, description string, waiter <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-waiter:
+		t.Fatalf("expected %s to remain pending", description)
+	case <-time.After(waiterShouldRemainPendingFor):
+	}
 }
 
 func assertPanic(t *testing.T, name string, fn func()) {
