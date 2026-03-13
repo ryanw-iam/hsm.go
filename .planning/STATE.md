@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 3 of 5 (Rules Conformance Matrix)
 current_plan: 4
-status: ready_to_execute
-stopped_at: Completed 03-rules-conformance-matrix-03-PLAN.md
-last_updated: "2026-03-13T18:15:30.000Z"
-last_activity: 2026-03-13 - Completed 03-03 with dedicated runtime and exemplar rule-ID conformance coverage
+status: ready_for_verification
+stopped_at: Completed 03-rules-conformance-matrix-04-PLAN.md
+last_updated: "2026-03-13T18:19:49.372Z"
+last_activity: 2026-03-13 - Completed 03-04 with finalized matrix evidence and a green canonical workspace gate
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 10
-  completed_plans: 9
-  percent: 90
+  completed_plans: 10
+  percent: 100
 ---
 
 # Project State
@@ -30,17 +30,17 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 Current Phase: 3 of 5 (Rules Conformance Matrix)
 Current Plan: 4
 Total Plans in Phase: 4
-Status: Ready to execute
-Last Activity: 2026-03-13 - Completed 03-03 with dedicated runtime and exemplar rule-ID conformance coverage
+Status: Ready for verification
+Last Activity: 2026-03-13 - Completed 03-04; Phase 3 is ready for verification handoff
 
-Progress: [█████████░] 90%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9
-- Average duration: 14 min
-- Total execution time: 2h 10m
+- Total plans completed: 10
+- Average duration: 13 min
+- Total execution time: 2h 14m
 
 **By Phase:**
 
@@ -48,14 +48,14 @@ Progress: [█████████░] 90%
 |-------|-------|-------|----------|
 | 1 | 3 | 90 min | 30 min |
 | 2 | 3 | 18 min | 6 min |
-| 3 | 3 | 22 min | 7 min |
+| 3 | 4 | 26 min | 6 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-02, 02-03, 03-01, 03-02, 03-03
+- Last 5 plans: 02-03, 03-01, 03-02, 03-03, 03-04
 - Trend: Improving
 
 **Latest Metric:**
-- Phase 03-rules-conformance-matrix P03 | 7 min | 1 task | 1 file
+- Phase 03-rules-conformance-matrix P04 | 4 min | 1 task | 2 files
 
 ## Accumulated Context
 
@@ -82,6 +82,8 @@ Recent decisions affecting current work:
 - [Phase 03-rules-conformance-matrix]: Legacy fixtures were updated to conform to HSM20 instead of preserving the old source-only top-level transition loophole.
 - [Phase 03-rules-conformance-matrix]: Exemplar-only rules stay as positive usage flows instead of fake negative enforcement tests.
 - [Phase 03-rules-conformance-matrix]: Closely related runtime rules reuse shared deterministic scenarios, but each matrix row still gets its own HSMxx subtest name.
+- [Phase 03-rules-conformance-matrix]: Phase 3 closes only when the checked-in matrix points to actual rule-ID subtests and the canonical verifier passes.
+- [Phase 03-rules-conformance-matrix]: HSM35 conformance should assert call protocol evidence without depending on race-sensitive effect-versus-operation ordering.
 
 ### Pending Todos
 
@@ -93,6 +95,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T18:14:55.977Z
-Stopped at: Completed 03-rules-conformance-matrix-03-PLAN.md
-Resume file: .planning/phases/03-rules-conformance-matrix/03-04-PLAN.md
+Last session: 2026-03-13T18:19:49.370Z
+Stopped at: Completed 03-rules-conformance-matrix-04-PLAN.md
+Resume file: None
