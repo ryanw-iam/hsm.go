@@ -13,7 +13,7 @@ This roadmap raises the existing `hsm.go` workspace to a release-gated verificat
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Coverage Baseline And Release Gates** - Establish exhaustive path coverage and make core verification mandatory for shipping. Completed 2026-03-13.
-- [ ] **Phase 2: Deterministic Runtime Semantics** - Prove concurrency, timing, ordering, and race-sensitive behavior deterministically.
+- [x] **Phase 2: Deterministic Runtime Semantics** - Prove concurrency, timing, ordering, and race-sensitive behavior deterministically. Completed 2026-03-13.
 - [ ] **Phase 3: Rules Conformance Matrix** - Turn `rules.md` into executable conformance checks for valid and invalid models.
 - [ ] **Phase 4: Adversarial Regression Matrix** - Add fault injection, fuzz/property checks, and compatibility/performance regression coverage.
 - [ ] **Phase 5: Hardening Remediation Closure** - Fix issues exposed by the new verification bar and close the release gate cleanly.
@@ -50,7 +50,7 @@ Plans:
 Plans:
 - [x] `02-01-PLAN.md` - Build deterministic timer and waiter harnesses, then move timer-driven runtime assertions into focused suites.
 - [x] `02-02-PLAN.md` - Add deterministic concurrent dispatch, queue-ordering, and multi-instance targeting coverage.
-- [ ] `02-03-PLAN.md` - Lock lifecycle timeout and restart semantics behind deterministic tests and close the race-enabled gate.
+- [x] `02-03-PLAN.md` - Lock lifecycle timeout and restart semantics behind deterministic tests and close the race-enabled gate.
 
 ### Phase 3: Rules Conformance Matrix
 **Goal**: The modeling contract in `rules.md` is enforced by executable conformance coverage.
@@ -100,7 +100,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Coverage Baseline And Release Gates | 3/3 | Complete | 2026-03-13 |
-| 2. Deterministic Runtime Semantics | 2/3 | In Progress | - |
+| 2. Deterministic Runtime Semantics | 3/3 | Complete | 2026-03-13 |
 | 3. Rules Conformance Matrix | 0/TBD | Not started | - |
 | 4. Adversarial Regression Matrix | 0/TBD | Not started | - |
 | 5. Hardening Remediation Closure | 0/TBD | Not started | - |
