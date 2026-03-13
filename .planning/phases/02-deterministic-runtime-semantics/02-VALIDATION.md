@@ -38,9 +38,12 @@ created: 2026-03-13
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 02-01-01 | 01 | 1 | VER-03 | harness/unit | `go test ./...` | ❌ W0 | ⬜ pending |
-| 02-02-01 | 02 | 1 | VER-03 | integration/order | `go test ./...` | ❌ W0 | ⬜ pending |
-| 02-03-01 | 03 | 2 | VER-03 | race/lifecycle | `bash scripts/verify-workspace.sh` | ❌ W0 | ⬜ pending |
+| 02-01-01 | 01 | 1 | VER-03 | harness/timers | `go test ./...` | ✅ | ⬜ pending |
+| 02-01-02 | 01 | 1 | VER-03 | timers/waiters | `go test ./...` | ✅ | ⬜ pending |
+| 02-02-01 | 02 | 2 | VER-03 | concurrency/order | `go test ./...` | ✅ | ⬜ pending |
+| 02-02-02 | 02 | 2 | VER-03 | multi-instance targeting | `go test ./...` | ✅ | ⬜ pending |
+| 02-03-01 | 03 | 3 | VER-03 | lifecycle/timeout | `go test ./...` | ✅ | ⬜ pending |
+| 02-03-02 | 03 | 3 | VER-03 | race/full-gate | `bash scripts/verify-workspace.sh` | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -48,9 +51,9 @@ created: 2026-03-13
 
 ## Wave 0 Requirements
 
-- [ ] `.planning/phases/02-deterministic-runtime-semantics/02-01-PLAN.md` — deterministic timer and waiter harness plan
-- [ ] `.planning/phases/02-deterministic-runtime-semantics/02-02-PLAN.md` — dispatch ordering and multi-instance semantics plan
-- [ ] `.planning/phases/02-deterministic-runtime-semantics/02-03-PLAN.md` — lifecycle timeout and race-hardening plan
+- [x] `.planning/phases/02-deterministic-runtime-semantics/02-01-PLAN.md` — deterministic timer and waiter harness plan
+- [x] `.planning/phases/02-deterministic-runtime-semantics/02-02-PLAN.md` — dispatch ordering and multi-instance semantics plan
+- [x] `.planning/phases/02-deterministic-runtime-semantics/02-03-PLAN.md` — lifecycle timeout and race-hardening plan
 
 *If none: "Existing infrastructure covers all phase requirements."*
 

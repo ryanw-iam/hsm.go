@@ -45,10 +45,12 @@ Plans:
   2. Timer-driven, cancellation, and ordering-sensitive behaviors can be verified without flaky sleeps or nondeterministic expectations.
   3. Race-enabled verification passes on the runtime scenarios that matter for production use.
   4. Post-dispatch assertions observe settled machine state through deterministic synchronization points instead of incidental timing.
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] TBD during `/gsd:plan-phase 2`
+- [ ] `02-01-PLAN.md` - Build deterministic timer and waiter harnesses, then move timer-driven runtime assertions into focused suites.
+- [ ] `02-02-PLAN.md` - Add deterministic concurrent dispatch, queue-ordering, and multi-instance targeting coverage.
+- [ ] `02-03-PLAN.md` - Lock lifecycle timeout and restart semantics behind deterministic tests and close the race-enabled gate.
 
 ### Phase 3: Rules Conformance Matrix
 **Goal**: The modeling contract in `rules.md` is enforced by executable conformance coverage.
@@ -98,7 +100,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Coverage Baseline And Release Gates | 3/3 | Complete | 2026-03-13 |
-| 2. Deterministic Runtime Semantics | 0/TBD | Next | - |
+| 2. Deterministic Runtime Semantics | 0/3 | Next | - |
 | 3. Rules Conformance Matrix | 0/TBD | Not started | - |
 | 4. Adversarial Regression Matrix | 0/TBD | Not started | - |
 | 5. Hardening Remediation Closure | 0/TBD | Not started | - |
