@@ -1,8 +1,10 @@
 package hsm_test
 
 import (
+	"fmt"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -283,6 +285,20 @@ func assertPanic(t *testing.T, name string, fn func()) {
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatalf("expected panic for %s", name)
+		}
+	}()
+	fn()
+}
+
+func assertPanicContains(t *testing.T, name string, want string, fn func()) {
+	t.Helper()
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatalf("expected panic for %s containing %q", name, want)
+		}
+		if got := fmt.Sprint(r); !strings.Contains(got, want) {
+			t.Fatalf("panic for %s = %q, want substring %q", name, got, want)
 		}
 	}()
 	fn()
