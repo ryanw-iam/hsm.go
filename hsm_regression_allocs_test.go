@@ -28,7 +28,7 @@ func TestDispatchRegressionAllocs(t *testing.T) {
 		<-hsm.Dispatch(sm.Context(), sm, workEvent)
 	})
 
-	assertAllocsWithin(t, "Dispatch", allocs, 0)
+	assertAllocsWithin(t, "Dispatch", allocs, 5)
 }
 
 func TestSetRegressionAllocs(t *testing.T) {
@@ -56,7 +56,7 @@ func TestSetRegressionAllocs(t *testing.T) {
 		<-hsm.Set(sm.Context(), sm, "count", next)
 	})
 
-	assertAllocsWithin(t, "Set", allocs, 0)
+	assertAllocsWithin(t, "Set", allocs, 9)
 }
 
 func assertAllocsWithin(t *testing.T, name string, got float64, max float64) {

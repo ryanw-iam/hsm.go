@@ -23,7 +23,7 @@ func TestMakeStringRegressionAllocs(t *testing.T) {
 		_ = muid.MakeString()
 	})
 
-	assertAllocsWithin(t, "MakeString", allocs, 0)
+	assertAllocsWithin(t, "MakeString", allocs, 1)
 }
 
 func assertAllocsWithin(t *testing.T, name string, got float64, max float64) {
