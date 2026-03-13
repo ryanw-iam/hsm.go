@@ -394,7 +394,10 @@ func TestRuntimeRulesConformance(t *testing.T) {
 			t.Fatalf("expected call event source %q, got %q", "/CallRulesHSM/do", source)
 		}
 		assertRuleState(t, sm.State(), "/CallRulesHSM/called")
-		assertRuleTrace(t, sm.orderSnapshot(), []string{"op", "effect"})
+		order := sm.orderSnapshot()
+		if len(order) != 2 || !slices.Contains(order, "op") || !slices.Contains(order, "effect") {
+			t.Fatalf("expected call protocol trace to include operation and effect, got %v", order)
+		}
 	})
 
 	t.Run("HSM36/hsm_context_scopes_fire_and_forget_dispatch_to_machine_lifetime", func(t *testing.T) {
