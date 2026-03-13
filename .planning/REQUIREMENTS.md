@@ -8,8 +8,8 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 
 ### Coverage And Release Gates
 
-- [ ] **VER-01**: Achieve exhaustive path-oriented test coverage for the `hsm.go` workspace, including `hsm`, `kind`, and `muid`.
-- [ ] **VER-02**: Add release-gating verification for public APIs, runtime branches, error paths, panic-recovery paths, and helper-module behavior.
+- [x] **VER-01**: Achieve exhaustive path-oriented test coverage for the `hsm.go` workspace, including `hsm`, `kind`, and `muid`.
+- [x] **VER-02**: Add release-gating verification for public APIs, runtime branches, error paths, panic-recovery paths, and helper-module behavior.
 
 ### Runtime Determinism
 
@@ -31,8 +31,8 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| VER-01 | Phase 1 | Pending |
-| VER-02 | Phase 1 | Pending |
+| VER-01 | Phase 1 | Complete |
+| VER-02 | Phase 1 | Complete |
 | VER-03 | Phase 2 | Pending |
 | VER-04 | Phase 3 | Pending |
 | VER-05 | Phase 4 | Pending |

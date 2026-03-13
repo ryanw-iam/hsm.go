@@ -12,7 +12,7 @@ This roadmap raises the existing `hsm.go` workspace to a release-gated verificat
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Coverage Baseline And Release Gates** - Establish exhaustive path coverage and make core verification mandatory for shipping.
+- [x] **Phase 1: Coverage Baseline And Release Gates** - Establish exhaustive path coverage and make core verification mandatory for shipping. Completed 2026-03-13.
 - [ ] **Phase 2: Deterministic Runtime Semantics** - Prove concurrency, timing, ordering, and race-sensitive behavior deterministically.
 - [ ] **Phase 3: Rules Conformance Matrix** - Turn `rules.md` into executable conformance checks for valid and invalid models.
 - [ ] **Phase 4: Adversarial Regression Matrix** - Add fault injection, fuzz/property checks, and compatibility/performance regression coverage.
@@ -32,9 +32,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
-- [ ] `01-01-PLAN.md` - Restructure root `hsm` coverage into explicit runtime and observer path suites.
-- [ ] `01-02-PLAN.md` - Bring `kind` and `muid` to the baseline bar and close the exposed `muid` gate failure.
-- [ ] `01-03-PLAN.md` - Create the canonical verification command, path matrix evidence, and release-blocking workflow wiring.
+- [x] `01-01-PLAN.md` - Restructure root `hsm` coverage into explicit runtime and observer path suites.
+- [x] `01-02-PLAN.md` - Bring `kind` and `muid` to the baseline bar and close the exposed `muid` gate failure.
+- [x] `01-03-PLAN.md` - Create the canonical verification command, path matrix evidence, and release-blocking workflow wiring.
 
 ### Phase 2: Deterministic Runtime Semantics
 **Goal**: Runtime behavior remains deterministic under concurrency, timing, dispatch ordering, and race-sensitive conditions.
@@ -97,8 +97,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Coverage Baseline And Release Gates | 0/3 | Not started | - |
-| 2. Deterministic Runtime Semantics | 0/TBD | Not started | - |
+| 1. Coverage Baseline And Release Gates | 3/3 | Complete | 2026-03-13 |
+| 2. Deterministic Runtime Semantics | 0/TBD | Next | - |
 | 3. Rules Conformance Matrix | 0/TBD | Not started | - |
 | 4. Adversarial Regression Matrix | 0/TBD | Not started | - |
 | 5. Hardening Remediation Closure | 0/TBD | Not started | - |
