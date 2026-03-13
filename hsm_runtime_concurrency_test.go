@@ -219,6 +219,68 @@ func TestRuntimeCompletionEventsPreemptQueuedEvents(t *testing.T) {
 	}
 }
 
+func TestRuntimeDispatchAllReachesEveryStartedInstance(t *testing.T) {
+	broadcastEvent := hsm.Event{Name: "broadcast"}
+	model := buildMultiInstanceDispatchModel(broadcastEvent)
+	ctx, instances := startMultiInstanceDispatchGroup(&model, "alpha", "bravo", "charlie")
+
+	fromContext, ok := hsm.InstancesFromContext(ctx)
+	if !ok {
+		t.Fatal("expected instances in shared context")
+	}
+	if len(fromContext) != 3 {
+		t.Fatalf("expected 3 instances in shared context, got %d", len(fromContext))
+	}
+
+	ids := make([]string, 0, len(fromContext))
+	for _, instance := range fromContext {
+		ids = append(ids, hsm.ID(instance))
+	}
+	slices.Sort(ids)
+	if !slices.Equal(ids, []string{"alpha", "bravo", "charlie"}) {
+		t.Fatalf("expected shared context IDs [alpha bravo charlie], got %v", ids)
+	}
+
+	entered := map[string]<-chan struct{}{
+		"alpha":   hsm.AfterEntry(ctx, instances["alpha"], "/MultiInstanceDispatchHSM/received"),
+		"bravo":   hsm.AfterEntry(ctx, instances["bravo"], "/MultiInstanceDispatchHSM/received"),
+		"charlie": hsm.AfterEntry(ctx, instances["charlie"], "/MultiInstanceDispatchHSM/received"),
+	}
+
+	awaitWaiter(t, "broadcast dispatch completion", hsm.DispatchAll(ctx, broadcastEvent))
+	for _, id := range []string{"alpha", "bravo", "charlie"} {
+		awaitWaiter(t, fmt.Sprintf("%s receiving broadcast event", id), entered[id])
+		if instances[id].State() != "/MultiInstanceDispatchHSM/received" {
+			t.Fatalf("expected %s to be in received state, got %s", id, instances[id].State())
+		}
+	}
+}
+
+func TestRuntimeDispatchToTargetsMatchingInstancesOnly(t *testing.T) {
+	targetEvent := hsm.Event{Name: "target"}
+	model := buildMultiInstanceDispatchModel(targetEvent)
+	ctx, instances := startMultiInstanceDispatchGroup(&model, "alpha", "bravo", "charlie")
+
+	alphaProcessed := hsm.AfterProcess(ctx, instances["alpha"], targetEvent)
+	bravoEntered := hsm.AfterEntry(ctx, instances["bravo"], "/MultiInstanceDispatchHSM/received")
+	charlieEntered := hsm.AfterEntry(ctx, instances["charlie"], "/MultiInstanceDispatchHSM/received")
+
+	awaitWaiter(t, "targeted dispatch completion", hsm.DispatchTo(ctx, targetEvent, "br*", "charlie"))
+	awaitWaiter(t, "bravo receiving targeted event", bravoEntered)
+	awaitWaiter(t, "charlie receiving targeted event", charlieEntered)
+	assertWaiterPending(t, "alpha processing targeted event", alphaProcessed)
+
+	if instances["alpha"].State() != "/MultiInstanceDispatchHSM/idle" {
+		t.Fatalf("expected alpha to remain idle, got %s", instances["alpha"].State())
+	}
+	if instances["bravo"].State() != "/MultiInstanceDispatchHSM/received" {
+		t.Fatalf("expected bravo to receive targeted event, got %s", instances["bravo"].State())
+	}
+	if instances["charlie"].State() != "/MultiInstanceDispatchHSM/received" {
+		t.Fatalf("expected charlie to receive targeted event, got %s", instances["charlie"].State())
+	}
+}
+
 func storeMaxInt32(target *atomic.Int32, value int32) {
 	for {
 		current := target.Load()
@@ -229,4 +291,29 @@ func storeMaxInt32(target *atomic.Int32, value int32) {
 			return
 		}
 	}
+}
+
+func buildMultiInstanceDispatchModel(event hsm.Event) hsm.Model {
+	return hsm.Define(
+		"MultiInstanceDispatchHSM",
+		hsm.Initial(hsm.Target("idle")),
+		hsm.State("idle"),
+		hsm.State("received"),
+		hsm.Transition(
+			hsm.On(event),
+			hsm.Source("idle"),
+			hsm.Target("received"),
+		),
+	)
+}
+
+func startMultiInstanceDispatchGroup(model *hsm.Model, ids ...string) (context.Context, map[string]hsm.Instance) {
+	ctx := context.Background()
+	instances := make(map[string]hsm.Instance, len(ids))
+	for _, id := range ids {
+		instance := hsm.Started(ctx, &THSM{}, model, hsm.Config{ID: id})
+		instances[id] = instance
+		ctx = instance.Context()
+	}
+	return ctx, instances
 }

@@ -453,39 +453,6 @@ func TestComplex(t *testing.T) {
 
 }
 
-func TestHSMDispatchAll(t *testing.T) {
-	fooEvent := hsm.Event{
-		Name: "foo",
-	}
-	barEvent := hsm.Event{
-		Name: "bar",
-	}
-	model := hsm.Define(
-		"TestHSM",
-		hsm.State("foo"),
-		hsm.State("bar"),
-		hsm.Transition(hsm.On(fooEvent), hsm.Source("foo"), hsm.Target("bar")),
-		hsm.Transition(hsm.On(barEvent), hsm.Source("bar"), hsm.Target("foo")),
-		hsm.Initial(hsm.Target("foo")),
-	)
-	ctx := context.Background()
-	sm1 := hsm.Started(ctx, &THSM{}, &model)
-	sm2 := hsm.Started(sm1.Context(), &THSM{}, &model)
-	if sm2.State() != "/TestHSM/foo" {
-		t.Fatal("state is not correct", "state", sm2.State())
-	}
-	hsm.DispatchAll(sm2.Context(), hsm.Event{
-		Name: "foo",
-	})
-	time.Sleep(time.Second)
-	if sm1.State() != "/TestHSM/bar" {
-		t.Fatal("state is not correct", "state", sm1.State())
-	}
-	if sm2.State() != "/TestHSM/bar" {
-		t.Fatal("state is not correct", "state", sm2.State())
-	}
-}
-
 func TestCustomStringStateTypes(t *testing.T) {
 	type stateName string
 	type transitionName string
@@ -607,41 +574,6 @@ func TestConfigClockAfterOnTerminate(t *testing.T) {
 	<-hsm.Stop(context.Background(), sm)
 	if afterCalls.Load() == 0 {
 		t.Fatal("expected config clock After to be called during terminate")
-	}
-}
-
-func TestDispatchTo(t *testing.T) {
-	fooEvent := hsm.Event{
-		Name: "foo",
-	}
-	barEvent := hsm.Event{
-		Name: "bar",
-	}
-	model := hsm.Define(
-		"TestHSM",
-		hsm.State("foo"),
-		hsm.State("bar"),
-		hsm.Transition(hsm.On(fooEvent), hsm.Source("foo"), hsm.Target("bar")),
-		hsm.Transition(hsm.On(barEvent), hsm.Source("bar"), hsm.Target("foo")),
-		hsm.Initial(hsm.Target("foo")),
-	)
-	ctx := context.Background()
-	sm1 := hsm.Started(ctx, &THSM{}, &model, hsm.Config{ID: "sm1"})
-	sm2 := hsm.Started(sm1.Context(), &THSM{}, &model, hsm.Config{ID: "sm2"})
-	if sm1.State() != "/TestHSM/foo" {
-		t.Fatal("state is not correct", "state", sm1.State())
-	}
-	if sm2.State() != "/TestHSM/foo" {
-		t.Fatal("state is not correct", "state", sm2.State())
-	}
-	<-hsm.DispatchTo(sm2.Context(), hsm.Event{
-		Name: "foo",
-	}, "sm*")
-	if sm2.State() != "/TestHSM/bar" {
-		t.Fatal("state is not correct", "state", sm2.State())
-	}
-	if sm1.State() != "/TestHSM/bar" {
-		t.Fatal("state is not correct", "state", sm1.State())
 	}
 }
 
