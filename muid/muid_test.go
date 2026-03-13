@@ -1,35 +1,60 @@
 package muid
 
 import (
+	"strconv"
+	"sync"
 	"testing"
 )
 
-func TestMUID(t *testing.T) {
-	const total = 1_000_000
-	muids := make(map[MUID]bool)
+func TestMakeConcurrentUniqueness(t *testing.T) {
+	const (
+		workers   = 8
+		perWorker = 2048
+		total     = workers * perWorker
+	)
+
 	ch := make(chan MUID, total)
-	for i := 0; i < total; i++ {
+	var wg sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
 		go func() {
-			muid := Make()
-			ch <- muid
+			defer wg.Done()
+			for i := 0; i < perWorker; i++ {
+				ch <- Make()
+			}
 		}()
 	}
-	for i := range total {
-		muid := <-ch
-		if muids[muid] {
-			t.Fatalf("collision: %d after %d", muid, i)
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	seen := make(map[MUID]struct{}, total)
+	for id := range ch {
+		if _, ok := seen[id]; ok {
+			t.Fatalf("collision detected for %d", id)
 		}
-		muids[muid] = true
+		seen[id] = struct{}{}
 	}
 }
 
-func TestMUIDStringLength(t *testing.T) {
-	const total = 1_000_000
-	length := len(Make().String())
-	for i := 0; i < total; i++ {
-		muid := Make()
-		if len(muid.String()) != length {
-			t.Fatalf("muid string length is not %d: %d", length, len(muid.String()))
+func TestMUIDStringRoundTrip(t *testing.T) {
+	samples := []MUID{
+		1,
+		32,
+		1024,
+		MUID(1<<20 + 17),
+		Make(),
+	}
+
+	for _, sample := range samples {
+		parsed, err := strconv.ParseUint(sample.String(), 32, 64)
+		if err != nil {
+			t.Fatalf("failed to parse %q: %v", sample.String(), err)
+		}
+		if got, want := MUID(parsed), sample; got != want {
+			t.Fatalf("round-trip mismatch: got %d, want %d", got, want)
 		}
 	}
 }

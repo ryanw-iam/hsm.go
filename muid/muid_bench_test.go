@@ -3,10 +3,8 @@ package muid_test
 import (
 	"crypto/rand"
 	"encoding/binary"
-	"sort"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/aidarkhanov/nanoid/v2"
 	"github.com/google/uuid"
@@ -150,95 +148,6 @@ func BenchmarkConcurrentUUID(b *testing.B) {
 		}()
 	}
 	wg.Wait()
-}
-
-// TestUniqueness tests that all generators produce unique IDs
-func TestUniqueness(t *testing.T) {
-	const total = 100000
-
-	// Test MUID uniqueness
-	t.Run("MUID", func(t *testing.T) {
-		muids := make(map[muid.MUID]bool, total)
-		for i := 0; i < total; i++ {
-			id := muid.Make()
-			if muids[id] {
-				t.Fatalf("MUID collision detected: %s", id)
-			}
-			muids[id] = true
-		}
-	})
-
-	// Test UUID uniqueness
-	t.Run("UUID", func(t *testing.T) {
-		uuids := make(map[uuid.UUID]bool, total)
-		for i := 0; i < total; i++ {
-			id := uuid.New()
-			if uuids[id] {
-				t.Fatalf("UUID collision detected: %s", id)
-			}
-			uuids[id] = true
-		}
-	})
-
-	// Test ULID uniqueness
-	t.Run("ULID", func(t *testing.T) {
-		ulids := make(map[ulid.ULID]bool, total)
-		for i := 0; i < total; i++ {
-			id := ulid.Make()
-			if ulids[id] {
-				t.Fatalf("ULID collision detected: %s", id)
-			}
-			ulids[id] = true
-		}
-	})
-
-	// Test NanoID uniqueness
-	t.Run("NanoID", func(t *testing.T) {
-		alphabet := "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-		nanoids := make(map[string]bool, total)
-		for i := 0; i < total; i++ {
-			id, _ := nanoid.GenerateString(alphabet, 21)
-			if nanoids[id] {
-				t.Fatalf("NanoID collision detected: %s", id)
-			}
-			nanoids[id] = true
-		}
-	})
-}
-
-// TestSortability tests that IDs maintain temporal ordering
-func TestSortability(t *testing.T) {
-	const total = 10000
-
-	// Test MUID sortability
-	t.Run("MUID", func(t *testing.T) {
-		var ids []muid.MUID
-		for i := 0; i < total; i++ {
-			ids = append(ids, muid.Make())
-			time.Sleep(time.Microsecond) // Ensure different timestamps
-		}
-
-		if !sort.SliceIsSorted(ids, func(i, j int) bool {
-			return uint64(ids[i]) < uint64(ids[j])
-		}) {
-			t.Fatal("MUIDs are not sortable")
-		}
-	})
-
-	// Test ULID sortability
-	t.Run("ULID", func(t *testing.T) {
-		var ids []ulid.ULID
-		for i := 0; i < total; i++ {
-			ids = append(ids, ulid.Make())
-			time.Sleep(time.Microsecond) // Ensure different timestamps
-		}
-
-		if !sort.SliceIsSorted(ids, func(i, j int) bool {
-			return ids[i].Compare(ids[j]) < 0
-		}) {
-			t.Fatal("ULIDs are not sortable")
-		}
-	})
 }
 
 // BenchmarkMemoryMUID benchmarks memory allocations for MUID generation

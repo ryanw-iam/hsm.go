@@ -90,8 +90,9 @@ var (
 	})
 
 	// Keep defaultConfig for NewGenerator defaults
-	defaultConfig = DefaultConfig()
-	shards        = defaultShards()
+	defaultConfig            = DefaultConfig()
+	defaultGeneratorInstance = NewGenerator(defaultConfig, 0, 0)
+	shards                   = defaultShards()
 )
 
 type Config struct {
@@ -225,12 +226,10 @@ func (g *Generator) ID() MUID {
 	}
 }
 
-// Make generates a new MUID using the default sharded generators.
-// It distributes load across generators for better parallel performance.
+// Make generates a new MUID using the default generator.
+// The default path preserves global monotonic ordering across calls.
 func Make() MUID {
-	// Atomically get the next index in a round-robin fashion.
-	idx := shards.idx.Add(1) % shards.size
-	return shards.pool[idx].ID()
+	return defaultGeneratorInstance.ID()
 }
 
 // MakeString generates a new MUID using the default sharded generators
