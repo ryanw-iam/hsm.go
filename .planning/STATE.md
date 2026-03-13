@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 4 of 5 (Adversarial Regression Matrix)
-current_plan: 3
-status: ready_for_verification
-stopped_at: Completed 04-03-PLAN.md
-last_updated: "2026-03-13T21:16:40.735Z"
-last_activity: 2026-03-13
+current_phase: 5 of 5 (Hardening Remediation Closure)
+current_plan: 0
+status: ready_to_plan
+stopped_at: Phase 5 ready for planning
+last_updated: "2026-03-13T21:18:31Z"
+last_activity: 2026-03-13 - Completed 04-03 with allocation regressions and a green canonical adversarial gate; Phase 4 complete and Phase 5 is ready for planning
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 13
   completed_plans: 13
-  percent: 100
+  percent: 80
 ---
 
 # Project State
@@ -23,17 +23,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** `hsm.go` must be a trustworthy, release-gated runtime dependency whose behavior is exhaustively verified across normal, edge, failure, concurrency, timing, and recovery paths.
-**Current focus:** Phase 4 - Adversarial Regression Matrix
+**Current focus:** Phase 5 - Hardening Remediation Closure
 
 ## Current Position
 
-Current Phase: 4 of 5 (Adversarial Regression Matrix)
-Current Plan: 3
-Total Plans in Phase: 3
-Status: Ready For Verification
-Last Activity: 2026-03-13
+Current Phase: 5 of 5 (Hardening Remediation Closure)
+Current Plan: TBD
+Total Plans in Phase: TBD
+Status: Ready to plan
+Last Activity: 2026-03-13 - Completed 04-03 allocation regressions and canonical adversarial gate wiring; Phase 4 complete and ready for Phase 5 planning
 
-Progress: [██████████] 100%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
@@ -57,10 +57,6 @@ Progress: [██████████] 100%
 
 **Latest Metric:**
 - Phase 04-adversarial-regression-matrix P03 | 3 min | 2 tasks | 3 files
-| Phase 04-adversarial-regression-matrix P03 | 3 min | 2 tasks | 3 files |
-| Phase 04-adversarial-regression-matrix P02 | 2 min | 2 tasks | 6 files |
-| Phase 04-adversarial-regression-matrix P01 | 4 min | 2 tasks | 3 files |
-| Phase 04-adversarial-regression-matrix P03 | 3 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -107,5 +103,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-03-13T21:16:40.732Z
-Stopped at: Completed 04-03-PLAN.md
-Resume file: None
+Stopped at: Phase 5 ready for planning
+Resume file: .planning/ROADMAP.md
