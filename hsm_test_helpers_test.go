@@ -1,6 +1,7 @@
 package hsm_test
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"slices"
@@ -156,6 +157,10 @@ type runtimeTrace struct {
 	entries []string
 }
 
+type errorEventRecorder struct {
+	errors chan error
+}
+
 func (t *runtimeTrace) record(entry string) {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
@@ -166,6 +171,34 @@ func (t *runtimeTrace) snapshot() []string {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 	return append([]string(nil), t.entries...)
+}
+
+func newErrorEventRecorder() *errorEventRecorder {
+	return &errorEventRecorder{
+		errors: make(chan error, 8),
+	}
+}
+
+func (r *errorEventRecorder) effect(ctx context.Context, sm *THSM, event hsm.Event) {
+	err, ok := event.Data.(error)
+	if !ok {
+		return
+	}
+	select {
+	case r.errors <- err:
+	default:
+	}
+}
+
+func (r *errorEventRecorder) await(t *testing.T, description string) error {
+	t.Helper()
+	select {
+	case err := <-r.errors:
+		return err
+	case <-time.After(waiterDeadline):
+		t.Fatalf("timed out waiting for %s error event", description)
+		return nil
+	}
 }
 
 func newDeterministicClockHarness() *deterministicClockHarness {
@@ -277,6 +310,15 @@ func assertWaiterPending(t *testing.T, description string, waiter <-chan struct{
 	case <-waiter:
 		t.Fatalf("expected %s to remain pending", description)
 	case <-time.After(waiterShouldRemainPendingFor):
+	}
+}
+
+func assertWaiterClosed(t *testing.T, description string, waiter <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-waiter:
+	default:
+		t.Fatalf("expected %s waiter to already be closed", description)
 	}
 }
 
