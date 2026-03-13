@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 4 of 5 (Adversarial Regression Matrix)
-current_plan: 1
-status: ready_to_execute
-stopped_at: Phase 4 planned with 3 plans across 2 waves; ready to execute Wave 1
-last_updated: "2026-03-13T19:20:00Z"
-last_activity: 2026-03-13 - Planned Phase 4 into 04-01 fault-injection coverage, 04-02 fuzz/property seed coverage, and 04-03 canonical gate wiring; ready to execute Wave 1
+current_plan: 2
+status: executing
+stopped_at: Completed 04-adversarial-regression-matrix-02-PLAN.md
+last_updated: "2026-03-13T21:07:04.491Z"
+last_activity: 2026-03-13
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 13
-  completed_plans: 10
-  percent: 60
+  completed_plans: 11
+  percent: 85
 ---
 
 # Project State
@@ -28,19 +28,19 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 ## Current Position
 
 Current Phase: 4 of 5 (Adversarial Regression Matrix)
-Current Plan: 1 of 3 (Wave 1 ready)
+Current Plan: 2 of 3
 Total Plans in Phase: 3
-Status: Ready to execute
-Last Activity: 2026-03-13 - Planned Phase 4 into three plans over two waves; Wave 1 can start with fault-injection coverage and fuzz/property seed coverage in parallel
+Status: Executing
+Last Activity: 2026-03-13 - Completed 04-02 bounded property seed coverage with checked-in root and `muid` fuzz corpora
 
-Progress: [██████░░░░] 60%
+Progress: [█████████░] 85%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 10
-- Average duration: 13 min
-- Total execution time: 2h 14m
+- Total plans completed: 11
+- Average duration: 12 min
+- Total execution time: 2h 16m
 
 **By Phase:**
 
@@ -51,11 +51,12 @@ Progress: [██████░░░░] 60%
 | 3 | 4 | 26 min | 6 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-03, 03-01, 03-02, 03-03, 03-04
+- Last 5 plans: 03-01, 03-02, 03-03, 03-04, 04-02
 - Trend: Improving
 
 **Latest Metric:**
-- Phase 03-rules-conformance-matrix P04 | 4 min | 1 task | 2 files
+- Phase 04-adversarial-regression-matrix P02 | 2 min | 2 tasks | 6 files
+| Phase 04-adversarial-regression-matrix P02 | 2 min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,8 @@ Recent decisions affecting current work:
 - [Phase 03-rules-conformance-matrix]: Closely related runtime rules reuse shared deterministic scenarios, but each matrix row still gets its own HSMxx subtest name.
 - [Phase 03-rules-conformance-matrix]: Phase 3 closes only when the checked-in matrix points to actual rule-ID subtests and the canonical verifier passes.
 - [Phase 03-rules-conformance-matrix]: HSM35 conformance should assert call protocol evidence without depending on race-sensitive effect-versus-operation ordering.
+- [Phase 04-adversarial-regression-matrix]: Keep bounded property targets narrow with checked-in seeds and skip oversized or invalid inputs so ordinary go test replay stays deterministic.
+- [Phase 04-adversarial-regression-matrix]: Model root HSM properties as a fixed reducer and force MUID boundary states inside the test instead of relying on open-ended fuzz exploration.
 
 ### Pending Todos
 
@@ -95,6 +98,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T18:19:49.370Z
-Stopped at: Phase 4 ready for planning
-Resume file: .planning/ROADMAP.md
+Last session: 2026-03-13T21:07:04.488Z
+Stopped at: Completed 04-adversarial-regression-matrix-02-PLAN.md
+Resume file: None

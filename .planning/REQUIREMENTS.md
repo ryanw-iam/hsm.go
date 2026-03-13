@@ -21,7 +21,7 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 
 ### Adversarial Regression
 
-- [ ] **VER-05**: Add fault-injection, fuzz/property-style, and compatibility/performance regression checks where needed to close verification gaps.
+- [x] **VER-05**: Add fault-injection, fuzz/property-style, and compatibility/performance regression checks where needed to close verification gaps.
 
 ### Remediation
 
@@ -35,5 +35,5 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 | VER-02 | Phase 1 | Complete |
 | VER-03 | Phase 2 | Complete |
 | VER-04 | Phase 3 | Complete |
-| VER-05 | Phase 4 | Pending |
+| VER-05 | Phase 4 | Complete |
 | VER-06 | Phase 5 | Pending |

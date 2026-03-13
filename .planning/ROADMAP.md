@@ -81,7 +81,7 @@ Plans:
 
 Plans:
 - [ ] `04-01-PLAN.md` - Add deterministic fault-injection coverage for hostile runtime and public-helper failures.
-- [ ] `04-02-PLAN.md` - Add bounded root and `muid` property checks with checked-in fuzz seeds.
+- [x] `04-02-PLAN.md` - Add bounded root and `muid` property checks with checked-in fuzz seeds.
 - [ ] `04-03-PLAN.md` - Add allocation and benchmark-smoke regression evidence, then wire the canonical adversarial gate.
 
 ### Phase 5: Hardening Remediation Closure
@@ -107,5 +107,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Coverage Baseline And Release Gates | 3/3 | Complete | 2026-03-13 |
 | 2. Deterministic Runtime Semantics | 3/3 | Complete | 2026-03-13 |
 | 3. Rules Conformance Matrix | 4/4 | Complete   | 2026-03-13 |
-| 4. Adversarial Regression Matrix | 0/3 | Planned | - |
+| 4. Adversarial Regression Matrix | 1/3 | In Progress | - |
 | 5. Hardening Remediation Closure | 0/TBD | Not started | - |
