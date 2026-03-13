@@ -2501,7 +2501,11 @@ func (sm *hsm[T]) stop(ctx context.Context) <-chan struct{} {
 			instances.Delete(sm.behavior.id)
 		}
 
+		hasQueuedEvents := sm.queue.len() > 0
 		sm.processing.wUnlock()
+		if hasQueuedEvents && sm.processing.tryLock() {
+			go sm.process(context.WithoutCancel(ctx))
+		}
 	}()
 	return signal
 }
