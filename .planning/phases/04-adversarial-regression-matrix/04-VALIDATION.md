@@ -38,17 +38,26 @@ created: 2026-03-13
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 04-01-01 | 01 | 1 | VER-05 | unit | `GOCACHE=$(pwd)/.cache/go-build go test ./... -run 'Test.*Adversarial'` | ❌ W0 | ⬜ pending |
-| 04-02-01 | 02 | 2 | VER-05 | fuzz-seed | `GOCACHE=$(pwd)/.cache/go-build go test ./... ./muid/... -run 'Fuzz'` | ❌ W0 | ⬜ pending |
-| 04-03-01 | 03 | 3 | VER-05 | allocs+bench-smoke | `GOCACHE=$(pwd)/.cache/go-build go test -run '^$' -bench '^(BenchmarkNestedStates_NoEntryExitActivity|BenchmarkMUIDGeneration)$' -benchtime=20x -benchmem ./ ./muid` | ❌ W0 | ⬜ pending |
+| 04-01-01 | 01 | 1 | VER-05 | unit-helper | `GOCACHE=$(pwd)/.cache/go-build go test ./... -run 'TestRuntimeStopTimeoutDispatchesErrorEventDeterministically|TestRuntimeRulesConformance'` | ✅ existing | ⬜ pending |
+| 04-01-02 | 01 | 1 | VER-05 | unit-adversarial | `GOCACHE=$(pwd)/.cache/go-build go test ./... -run 'TestRuntimeAdversarial|TestPublicHelperAdversarial'` | ❌ planned | ⬜ pending |
+| 04-02-01 | 02 | 1 | VER-05 | fuzz-seed-root | `GOCACHE=$(pwd)/.cache/go-build go test ./... -run 'FuzzHSMEventScriptProperties'` | ❌ planned | ⬜ pending |
+| 04-02-02 | 02 | 1 | VER-05 | fuzz-seed-muid | `GOCACHE=$(pwd)/.cache/go-build go test ./muid/... -run 'FuzzMUIDGeneratorProperties'` | ❌ planned | ⬜ pending |
+| 04-03-01 | 03 | 2 | VER-05 | alloc-regression | `GOCACHE=$(pwd)/.cache/go-build go test ./... ./muid/... -run 'Test.*RegressionAllocs'` | ❌ planned | ⬜ pending |
+| 04-03-02 | 03 | 2 | VER-05 | canonical-gate | `GOCACHE=$(pwd)/.cache/go-build bash scripts/verify-workspace.sh` | ✅ existing | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
 ---
 
+## Wave Structure
+
+- **Wave 1:** 04-01 and 04-02 run in parallel. 04-01 owns helper/runtime fault-injection work. 04-02 stays limited to stable event-script and `muid` property coverage so it does not depend on 04-01 remediation.
+- **Wave 2:** 04-03 depends on both Wave 1 plans and wires the canonical gate to execute allocation regression checks explicitly before benchmark smoke.
+
 ## Wave 0 Requirements
 
-- [x] Existing infrastructure covers all phase requirements.
+- [x] Existing deterministic harness, waiters, clock injection, and canonical verifier already exist from Phases 1-3.
+- [x] No extra Wave 0 scaffolding is required before Phase 4 execution.
 
 ---
 

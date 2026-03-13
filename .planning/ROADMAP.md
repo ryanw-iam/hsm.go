@@ -77,10 +77,12 @@ Plans:
   2. Fuzz or property-style checks preserve core invariants for targeted input and state-path surfaces.
   3. Compatibility or performance regressions that matter to downstream consumers are surfaced by automated checks before release.
   4. Added adversarial coverage improves confidence without introducing flaky or unbounded standard CI behavior.
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] TBD during `/gsd:plan-phase 4`
+- [ ] `04-01-PLAN.md` - Add deterministic fault-injection coverage for hostile runtime and public-helper failures.
+- [ ] `04-02-PLAN.md` - Add bounded root and `muid` property checks with checked-in fuzz seeds.
+- [ ] `04-03-PLAN.md` - Add allocation and benchmark-smoke regression evidence, then wire the canonical adversarial gate.
 
 ### Phase 5: Hardening Remediation Closure
 **Goal**: Issues exposed by the verification matrix are fixed and locked in as permanent regression coverage.
@@ -105,5 +107,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Coverage Baseline And Release Gates | 3/3 | Complete | 2026-03-13 |
 | 2. Deterministic Runtime Semantics | 3/3 | Complete | 2026-03-13 |
 | 3. Rules Conformance Matrix | 4/4 | Complete   | 2026-03-13 |
-| 4. Adversarial Regression Matrix | 0/TBD | Not started | - |
+| 4. Adversarial Regression Matrix | 0/3 | Planned | - |
 | 5. Hardening Remediation Closure | 0/TBD | Not started | - |

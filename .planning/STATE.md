@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 4 of 5 (Adversarial Regression Matrix)
-current_plan: 0
-status: ready_to_plan
-stopped_at: Phase 4 ready for planning
-last_updated: "2026-03-13T18:58:20Z"
-last_activity: 2026-03-13 - Completed 03-04 with finalized matrix evidence and a green canonical workspace gate; Phase 3 complete and Phase 4 is ready for planning
+current_plan: 1
+status: ready_to_execute
+stopped_at: Phase 4 planned with 3 plans across 2 waves; ready to execute Wave 1
+last_updated: "2026-03-13T19:20:00Z"
+last_activity: 2026-03-13 - Planned Phase 4 into 04-01 fault-injection coverage, 04-02 fuzz/property seed coverage, and 04-03 canonical gate wiring; ready to execute Wave 1
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 10
+  total_plans: 13
   completed_plans: 10
   percent: 60
 ---
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 ## Current Position
 
 Current Phase: 4 of 5 (Adversarial Regression Matrix)
-Current Plan: TBD
-Total Plans in Phase: TBD
-Status: Ready to plan
-Last Activity: 2026-03-13 - Completed 03-04 finalized matrix evidence and canonical gate proof; Phase 3 complete and ready for Phase 4 planning
+Current Plan: 1 of 3 (Wave 1 ready)
+Total Plans in Phase: 3
+Status: Ready to execute
+Last Activity: 2026-03-13 - Planned Phase 4 into three plans over two waves; Wave 1 can start with fault-injection coverage and fuzz/property seed coverage in parallel
 
 Progress: [██████░░░░] 60%
 
