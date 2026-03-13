@@ -107,5 +107,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Coverage Baseline And Release Gates | 3/3 | Complete | 2026-03-13 |
 | 2. Deterministic Runtime Semantics | 3/3 | Complete | 2026-03-13 |
 | 3. Rules Conformance Matrix | 4/4 | Complete   | 2026-03-13 |
-| 4. Adversarial Regression Matrix | 1/3 | In Progress | - |
+| 4. Adversarial Regression Matrix | 2/3 | In Progress | - |
 | 5. Hardening Remediation Closure | 0/TBD | Not started | - |
