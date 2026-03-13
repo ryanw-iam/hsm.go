@@ -17,7 +17,7 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 
 ### Rules Conformance
 
-- [ ] **VER-04**: Add conformance coverage for the library rules captured in `rules.md`.
+- [x] **VER-04**: Add conformance coverage for the library rules captured in `rules.md`.
 
 ### Adversarial Regression
 
@@ -34,6 +34,6 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 | VER-01 | Phase 1 | Complete |
 | VER-02 | Phase 1 | Complete |
 | VER-03 | Phase 2 | Complete |
-| VER-04 | Phase 3 | Pending |
+| VER-04 | Phase 3 | Complete |
 | VER-05 | Phase 4 | Pending |
 | VER-06 | Phase 5 | Pending |
