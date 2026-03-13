@@ -2482,6 +2482,9 @@ func (sm *hsm[T]) stop(ctx context.Context) <-chan struct{} {
 				return
 			default:
 				sm.exit(ctx, state, &FinalEvent)
+				if ch, ok := sm.after.exited.LoadAndDelete(state.QualifiedName()); ok {
+					close(ch.(chan struct{}))
+				}
 				state, ok = sm.model.members[state.Owner()]
 				if ok {
 					sm.state.Store(state)
@@ -2937,6 +2940,13 @@ func cleanup[T Instance](ctx context.Context, sm *hsm[T], element Element) {
 	}
 	if ch, ok := sm.after.executed.LoadAndDelete(element.QualifiedName()); ok {
 		close(ch.(chan struct{}))
+	}
+	if owner := element.Owner(); owner != "" {
+		if ownerElement, ok := sm.model.members[owner]; ok && kind.Is(ownerElement.Kind(), StateKind) {
+			if ch, ok := sm.after.executed.LoadAndDelete(owner); ok {
+				close(ch.(chan struct{}))
+			}
+		}
 	}
 }
 
