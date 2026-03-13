@@ -60,10 +60,13 @@ Plans:
   1. The documented rule set is represented by executable tests that demonstrate compliant usage patterns passing.
   2. Invalid model definitions or runtime usages that violate documented rules fail in clear, repeatable ways.
   3. Rule conformance evidence is maintained in-repo so regressions against the documented contract are caught before release.
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] TBD during `/gsd:plan-phase 3`
+- [ ] `03-01-PLAN.md` - Publish the checked-in rules matrix and shared conformance helper contract.
+- [ ] `03-02-PLAN.md` - Build the dedicated define/build-time conformance suite for invalid models.
+- [ ] `03-03-PLAN.md` - Build the deterministic runtime/exemplar conformance suite for semantic and exemplar rules.
+- [ ] `03-04-PLAN.md` - Reconcile matrix evidence to the implemented suites and prove the full canonical gate.
 
 ### Phase 4: Adversarial Regression Matrix
 **Goal**: The verification suite covers hostile, malformed, and regression-prone conditions beyond nominal functional tests.
@@ -101,6 +104,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Coverage Baseline And Release Gates | 3/3 | Complete | 2026-03-13 |
 | 2. Deterministic Runtime Semantics | 3/3 | Complete | 2026-03-13 |
-| 3. Rules Conformance Matrix | 0/TBD | Not started | - |
+| 3. Rules Conformance Matrix | 0/4 | Planned | - |
 | 4. Adversarial Regression Matrix | 0/TBD | Not started | - |
 | 5. Hardening Remediation Closure | 0/TBD | Not started | - |
