@@ -120,6 +120,52 @@ type timerRegistration struct {
 	after     chan time.Time
 }
 
+type startBarrier struct {
+	ready sync.WaitGroup
+	start chan struct{}
+}
+
+func newStartBarrier(participants int) *startBarrier {
+	barrier := &startBarrier{
+		start: make(chan struct{}),
+	}
+	barrier.ready.Add(participants)
+	return barrier
+}
+
+func (b *startBarrier) participantReadyAndWait() {
+	b.ready.Done()
+	<-b.start
+}
+
+func (b *startBarrier) release(t *testing.T, description string) {
+	t.Helper()
+	ready := make(chan struct{})
+	go func() {
+		b.ready.Wait()
+		close(ready)
+	}()
+	awaitWaiter(t, description, ready)
+	close(b.start)
+}
+
+type runtimeTrace struct {
+	mutex   sync.Mutex
+	entries []string
+}
+
+func (t *runtimeTrace) record(entry string) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	t.entries = append(t.entries, entry)
+}
+
+func (t *runtimeTrace) snapshot() []string {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	return append([]string(nil), t.entries...)
+}
+
 func newDeterministicClockHarness() *deterministicClockHarness {
 	return &deterministicClockHarness{
 		pending: make(chan *timerRegistration, 32),
