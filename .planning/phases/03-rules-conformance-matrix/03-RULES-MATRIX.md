@@ -1,6 +1,6 @@
 # Phase 3 Rules Conformance Matrix
 
-`rules.md` remains the canonical wording for the contract. This matrix adds the honest enforcement class, the planned evidence target, and a short implementation note for each `HSMxx` rule.
+`rules.md` remains the canonical wording for the contract. This matrix adds the honest enforcement class, the actual dedicated-suite evidence target, and a short implementation note for each `HSMxx` rule.
 
 | Rule | Enforcement | Evidence | Notes |
 | --- | --- | --- | --- |
@@ -28,7 +28,7 @@
 | HSM22 | exemplar | `TestRuntimeRulesConformance/HSM22/external_code_uses_attributes_instead_of_internal_context` | External reads and writes against internal machine fields are not blocked directly, so the evidence is a positive attribute-based usage example. |
 | HSM23 | exemplar | `TestRuntimeRulesConformance/HSM23/get_and_set_expose_stateful_machine_data` | Attribute access is a recommended API pattern rather than a rejected misuse case. |
 | HSM24 | exemplar | `TestRuntimeRulesConformance/HSM24/context_carries_requests_not_durable_machine_state` | `context.Context` misuse is guidance-only today, so the evidence is a positive separation-of-concerns example. |
-| HSM25 | exemplar | `TestRuntimeRulesConformance/HSM25_external_input_arrives_via_events_or_attributes` | External field mutation cannot be rejected generically, so the evidence demonstrates the supported event/attribute flow. |
+| HSM25 | exemplar | `TestRuntimeRulesConformance/HSM25/external_input_arrives_via_events_or_attributes` | External field mutation cannot be rejected generically, so the evidence demonstrates the supported event/attribute flow. |
 | HSM26 | exemplar | `TestRuntimeRulesConformance/HSM26/event_payload_coordinates_request_response` | Request/response coordination through event payloads is an API-usage exemplar, not a panic-enforced rule. |
 | HSM27 | exemplar | `TestRuntimeRulesConformance/HSM27/run_to_completion_serializes_context_access_without_mutexes` | Extra mutexes are architectural misuse the library does not detect, so the evidence is a positive RTC example. |
 | HSM28 | exemplar | `TestRuntimeRulesConformance/HSM28/events_and_attributes_replace_shared_memory_coordination` | Preference for events/attributes over shared memory is advisory and should be shown by example only. |
