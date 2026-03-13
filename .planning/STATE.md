@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 4 of 5 (Adversarial Regression Matrix)
-current_plan: 2
+current_plan: 3
 status: executing
-stopped_at: Completed 04-adversarial-regression-matrix-02-PLAN.md
-last_updated: "2026-03-13T21:07:04.491Z"
+stopped_at: Completed 04-adversarial-regression-matrix-01-PLAN.md
+last_updated: "2026-03-13T21:09:07.488Z"
 last_activity: 2026-03-13
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 13
-  completed_plans: 11
+  completed_plans: 12
   percent: 85
 ---
 
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 ## Current Position
 
 Current Phase: 4 of 5 (Adversarial Regression Matrix)
-Current Plan: 2 of 3
+Current Plan: 3
 Total Plans in Phase: 3
 Status: Executing
-Last Activity: 2026-03-13 - Completed 04-02 bounded property seed coverage with checked-in root and `muid` fuzz corpora
+Last Activity: 2026-03-13
 
 Progress: [█████████░] 85%
 
@@ -57,6 +57,7 @@ Progress: [█████████░] 85%
 **Latest Metric:**
 - Phase 04-adversarial-regression-matrix P02 | 2 min | 2 tasks | 6 files
 | Phase 04-adversarial-regression-matrix P02 | 2 min | 2 tasks | 6 files |
+| Phase 04-adversarial-regression-matrix P01 | 4 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -87,6 +88,8 @@ Recent decisions affecting current work:
 - [Phase 03-rules-conformance-matrix]: HSM35 conformance should assert call protocol evidence without depending on race-sensitive effect-versus-operation ordering.
 - [Phase 04-adversarial-regression-matrix]: Keep bounded property targets narrow with checked-in seeds and skip oversized or invalid inputs so ordinary go test replay stays deterministic.
 - [Phase 04-adversarial-regression-matrix]: Model root HSM properties as a fixed reducer and force MUID boundary states inside the test instead of relying on open-ended fuzz exploration.
+- [Phase 04-adversarial-regression-matrix]: Typed-nil helper contexts should collapse to the existing missing-context contract instead of panicking in context lookups.
+- [Phase 04-adversarial-regression-matrix]: Adversarial runtime evidence should reuse ErrorEvent transitions, waiter channels, and the deterministic clock harness rather than introducing a second fault runner.
 
 ### Pending Todos
 
@@ -98,6 +101,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T21:07:04.488Z
-Stopped at: Completed 04-adversarial-regression-matrix-02-PLAN.md
+Last session: 2026-03-13T21:09:07.486Z
+Stopped at: Completed 04-adversarial-regression-matrix-01-PLAN.md
 Resume file: None
