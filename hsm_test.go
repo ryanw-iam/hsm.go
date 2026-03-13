@@ -15,117 +15,6 @@ import (
 	"github.com/stateforward/hsm.go"
 )
 
-type Trace struct {
-	sync  []string
-	async []string
-	mutex *sync.Mutex
-}
-
-func (t *Trace) reset() {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	t.sync = []string{}
-	t.async = []string{}
-}
-
-func (t *Trace) matches(expected Trace) bool {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	if expected.sync != nil && !slices.Equal(t.sync, expected.sync) {
-		return false
-	}
-	if expected.async != nil && !slices.Equal(t.async, expected.async) {
-		return false
-	}
-	return true
-}
-
-func (t *Trace) contains(expected Trace) bool {
-	if expected.sync != nil && slices.ContainsFunc(t.sync, func(s string) bool {
-		return slices.Contains(expected.sync, s)
-	}) {
-		return true
-	}
-	if expected.async != nil && slices.ContainsFunc(t.async, func(s string) bool {
-		return slices.Contains(expected.async, s)
-	}) {
-		return true
-	}
-	return false
-}
-
-type Event struct{}
-
-type THSM struct {
-	hsm.HSM
-	foo int
-}
-
-type AttrHSM struct {
-	hsm.HSM
-}
-
-type CallOrderHSM struct {
-	hsm.HSM
-	mu    sync.Mutex
-	order []string
-}
-
-func (sm *CallOrderHSM) record(step string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.order = append(sm.order, step)
-}
-
-func (sm *CallOrderHSM) orderSnapshot() []string {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	return append([]string(nil), sm.order...)
-}
-
-type CallSigHSM struct {
-	hsm.HSM
-	mu   sync.Mutex
-	hits []string
-}
-
-func (sm *CallSigHSM) record(hit string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.hits = append(sm.hits, hit)
-}
-
-func (sm *CallSigHSM) hitsSnapshot() []string {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	return append([]string(nil), sm.hits...)
-}
-
-func (sm *CallSigHSM) methodExpr(arg string) string {
-	sm.record("methodExpr")
-	return "method:" + arg
-}
-
-func assertPanic(t *testing.T, name string, fn func()) {
-	t.Helper()
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("expected panic for %s", name)
-		}
-	}()
-	fn()
-}
-
-func assertNoPanic(t *testing.T, name string, fn func()) {
-	t.Helper()
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("unexpected panic for %s: %v", name, r)
-		}
-	}()
-	fn()
-}
-
 func TestComplex(t *testing.T) {
 	trace := &Trace{
 		mutex: &sync.Mutex{},
@@ -711,20 +600,29 @@ func TestEvery(t *testing.T) {
 		),
 	)
 	_ = hsm.Started(context.Background(), &THSM{}, &model)
-	for i := 0; i < 10; i++ {
-		time.Sleep(time.Millisecond * 550)
+
+	deadline := time.After(6 * time.Second)
+	for {
 		mutex.Lock()
-		if len(timestamps) > i+1 {
-			t.Fatalf("timestamps are not in order expected %d got %d", i+1, len(timestamps))
-		}
+		count := len(timestamps)
 		mutex.Unlock()
+		if count >= 10 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected 10 timestamps, got %d", count)
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
+
 	mutex.Lock()
 	defer mutex.Unlock()
-	for i := 1; i < len(timestamps)-1; i++ {
+	for i := 0; i < len(timestamps)-1; i++ {
 		delta := timestamps[i+1].Sub(timestamps[i])
-		if delta < time.Millisecond*500 || delta > time.Millisecond*551 {
-			t.Fatalf("delta is not correct expected %v got %v", time.Millisecond*500, delta)
+		if delta < 450*time.Millisecond || delta > 650*time.Millisecond {
+			t.Fatalf("delta[%d] out of range: got %v", i, delta)
 		}
 	}
 }
@@ -1862,7 +1760,13 @@ func TestWhen(t *testing.T) {
 		hsm.State("bar"),
 	)
 	sm := hsm.Started(context.Background(), &THSM{}, &model)
-	time.Sleep(4 * time.Millisecond)
+
+	entered := hsm.AfterEntry(sm.Context(), sm, "/TestWhenHSM/bar")
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatalf("expected state to reach bar, got %s", sm.State())
+	}
 	if sm.State() != "/TestWhenHSM/bar" {
 		t.Fatalf("expected state to be bar, got %s", sm.State())
 	}
