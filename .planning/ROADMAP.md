@@ -92,10 +92,12 @@ Plans:
   1. Previously failing correctness, determinism, observability, or maintainability scenarios now pass with permanent regression protection.
   2. Diagnostics and test structure are clear enough that a failing verification result points directly to the broken behavior family.
   3. No known v1 verification-blocking defects discovered in earlier phases remain open when the release gate is run end to end.
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] TBD during `/gsd:plan-phase 5`
+- [ ] `05-01-PLAN.md` - Align `Stop(nil)` with the hardened hostile-helper contract and lock the seam behind focused regression coverage.
+- [ ] `05-02-PLAN.md` - Align `rules.md`, exported helper comments, and `README.md` around the hardened public synchronization contract.
+- [ ] `05-03-PLAN.md` - Make the canonical gate phase-neutral, track contract artifacts cleanly, remove stale legacy CI, and prove the final release gate.
 
 ## Progress
 
@@ -108,4 +110,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Deterministic Runtime Semantics | 3/3 | Complete | 2026-03-13 |
 | 3. Rules Conformance Matrix | 4/4 | Complete   | 2026-03-13 |
 | 4. Adversarial Regression Matrix | 3/3 | Complete | 2026-03-13 |
-| 5. Hardening Remediation Closure | 0/TBD | Not started | - |
+| 5. Hardening Remediation Closure | 0/3 | Planned | - |

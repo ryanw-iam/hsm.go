@@ -38,9 +38,9 @@ created: 2026-03-13
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 05-01-01 | 01 | 1 | VER-06 | unit | `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestRuntimeAdversarial|TestPublicHelperAdversarial'` | ✅ | ⬜ pending |
-| 05-02-01 | 02 | 2 | VER-06 | unit+docs | `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestRuntimeRulesConformance|TestRuntimeAdversarial'` | ✅ | ⬜ pending |
-| 05-03-01 | 03 | 3 | VER-06 | smoke+hygiene | `GOCACHE="$PWD/.cache/go-build" bash scripts/verify-workspace.sh` | ✅ | ⬜ pending |
+| 05-01-01 | 01 | 1 | VER-06 | unit | `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestPublicHelperAdversarial|TestRuntimeStopCancelsActivityAndClosesAfterExecuted|TestRuntimeStopTimeoutDispatchesErrorEventDeterministically'` | ✅ | ⬜ pending |
+| 05-02-01 | 02 | 2 | VER-06 | unit+docs | `bash -lc 'rg -n "HSM53: ALWAYS wait on the channel returned by \`Dispatch\`, \`Set\`, \`Restart\`, \`Stop\`, \`DispatchAll\`, or \`DispatchTo\` before asserting on post-transition state\\." rules.md >/dev/null && rg -n "HSM54: NEVER use \`hsm.AfterProcess\\(\\.\\.\\.\\)\`, \`hsm.AfterDispatch\\(\\.\\.\\.\\)\`, \`hsm.AfterEntry\\(\\.\\.\\.\\)\`, \`hsm.AfterExit\\(\\.\\.\\.\\)\`, or \`hsm.AfterExecuted\\(\\.\\.\\.\\)\` as production synchronization mechanisms\\." rules.md >/dev/null && for f in hsm.go README.md; do rg -n "completion channel|supported production synchronization path" "$f" >/dev/null && rg -n "tests and deterministic observation only|deterministic observation" "$f" >/dev/null; done && ! rg -n "coordinating external operations with state transitions|general synchronization" hsm.go README.md >/dev/null && git ls-files --error-unmatch rules.md >/dev/null && GOCACHE="$PWD/.cache/go-build" go test ./... -run "TestRuntimeRulesConformance|TestPublicHelperAdversarial"'` | ✅ | ⬜ pending |
+| 05-03-01 | 03 | 3 | VER-06 | smoke+hygiene | `bash -lc '! rg -n "phase 4 workspace verification|phase 4" scripts/verify-workspace.sh >/dev/null && rg -n "canonical workspace verification|workspace release gate|workspace verification passed|release gate passed" scripts/verify-workspace.sh >/dev/null && GOCACHE="$PWD/.cache/go-build" bash scripts/verify-workspace.sh && test ! -f .travis.yml'` | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -56,7 +56,7 @@ created: 2026-03-13
 
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
-| Release-clean tracked contract artifacts and stale CI cleanup | VER-06 | Git tracking and file-presence hygiene are repository-state checks, not runtime behavior | Run `git ls-files --error-unmatch rules.md`, confirm phase-neutral wording in `scripts/verify-workspace.sh`, and confirm `.travis.yml` is removed or intentionally archived. |
+| None | n/a | All Phase 5 checks are covered by automated verification commands. | n/a |
 
 ---
 
