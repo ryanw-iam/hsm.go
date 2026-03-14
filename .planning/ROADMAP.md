@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Adversarial Regression Matrix** - Add fault injection, fuzz/property checks, and compatibility/performance regression coverage. Completed 2026-03-13.
 - [x] **Phase 5: Hardening Remediation Closure** - Fix issues exposed by the new verification bar and close the release gate cleanly. Completed 2026-03-14.
 - [x] **Phase 6: Deterministic Runtime Verification Backfill** - Restore milestone-grade verification evidence for the deterministic runtime phase and close the Phase 2 audit orphan. Completed 2026-03-14.
-- [ ] **Phase 7: Rules Conformance Verification Backfill** - Restore milestone-grade verification evidence for the rules conformance phase and close the Phase 3 audit orphan. Pending.
+- [ ] **Phase 7: Rules Conformance Verification Backfill** - Restore milestone-grade verification evidence for the rules conformance phase and close the Phase 3 audit orphan. In progress.
 - [ ] **Phase 8: Adversarial Verification Backfill** - Restore milestone-grade verification evidence for the adversarial regression phase and close the Phase 4 audit orphan. Pending.
 
 ## Phase Details
@@ -130,7 +130,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] `07-01-PLAN.md` - Fresh-rerun the shipped Phase 3 rules slice and canonical workspace gate, allowing only tiny in-slice correction if current evidence disproves an existing claim.
+- [x] `07-01-PLAN.md` - Fresh-rerun the shipped Phase 3 rules slice and canonical workspace gate, allowing only tiny in-slice correction if current evidence disproves an existing claim.
 - [ ] `07-02-PLAN.md` - Backfill `03-VERIFICATION.md` and reconcile `03-VALIDATION.md` in place from executed Phase 7 evidence.
 - [ ] `07-03-PLAN.md` - Close `VER-04` traceability in `REQUIREMENTS.md` and regenerate the milestone audit without hiding the remaining Phase 8 / `VER-05` debt.
 
@@ -161,5 +161,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 4. Adversarial Regression Matrix | 3/3 | Complete | 2026-03-13 |
 | 5. Hardening Remediation Closure | 3/3 | Complete | 2026-03-14 |
 | 6. Deterministic Runtime Verification Backfill | 3/3 | Complete | 2026-03-14 |
-| 7. Rules Conformance Verification Backfill | 0/3 | Pending | - |
+| 7. Rules Conformance Verification Backfill | 1/3 | In Progress | - |
 | 8. Adversarial Verification Backfill | 0/0 | Pending | - |
