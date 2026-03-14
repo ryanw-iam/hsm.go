@@ -1,15 +1,15 @@
 ---
 phase: 03
 slug: rules-conformance-matrix
-status: draft
+status: passed
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-03-13
 ---
 
-# Phase 3 — Validation Strategy
+# Phase 3 — Validation Record
 
-> Per-phase validation contract for feedback sampling during execution.
+> Executed validation record for the shipped Phase 3 rules-conformance scope, reconciled during the Phase 7 backfill.
 
 ---
 
@@ -19,18 +19,27 @@ created: 2026-03-13
 |----------|-------|
 | **Framework** | go test |
 | **Config file** | none |
-| **Quick run command** | `go test ./... -run 'TestModelRulesConformance|TestRuntimeRulesConformance'` |
-| **Full suite command** | `bash scripts/verify-workspace.sh` |
+| **Quick run command** | `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestModelRulesConformance|TestRuntimeRulesConformance' -count=1` |
+| **Full suite command** | `GOCACHE="$PWD/.cache/go-build" bash scripts/verify-workspace.sh` |
 | **Estimated runtime** | ~20 seconds |
 
 ---
 
 ## Sampling Rate
 
-- **After every task commit:** Run `go test ./...`
-- **After every plan wave:** Run `bash scripts/verify-workspace.sh`
+- **After every task commit:** Run the smallest relevant rules-conformance command with `GOCACHE="$PWD/.cache/go-build"`.
+- **After every plan wave:** Run `GOCACHE="$PWD/.cache/go-build" bash scripts/verify-workspace.sh`
 - **Before `$gsd-verify-work`:** Full suite must be green
 - **Max feedback latency:** 20 seconds
+
+---
+
+## Validation Architecture
+
+- Matrix integrity stays anchored to `rules.md` through direct file checks against `03-RULES-MATRIX.md`.
+- Define-time contract evidence is isolated behind `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestModelRulesConformance' -count=1`.
+- Runtime and exemplar evidence is isolated behind `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestRuntimeRulesConformance' -count=1`.
+- The canonical workspace gate remains `GOCACHE="$PWD/.cache/go-build" bash scripts/verify-workspace.sh`, so the focused rules evidence and the broader release surface use the same copy-safe command family.
 
 ---
 
@@ -38,13 +47,13 @@ created: 2026-03-13
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 03-01-01 | 01 | 1 | VER-04 | matrix/classification | `test -f .planning/phases/03-rules-conformance-matrix/03-RULES-MATRIX.md && diff -u <(sed -n 's/^- \\(HSM[0-9][0-9]\\):.*/\\1/p' rules.md | sort) <(awk -F'|' '/^\\| HSM[0-9][0-9] / {gsub(/ /, "", $2); print $2}' .planning/phases/03-rules-conformance-matrix/03-RULES-MATRIX.md | sort) && awk -F'|' '/^\\| HSM[0-9][0-9] / {gsub(/ /, "", $3); if ($3 != "define_panic" && $3 != "runtime_semantic" && $3 != "exemplar") exit 1} END {exit 0}' .planning/phases/03-rules-conformance-matrix/03-RULES-MATRIX.md` | ❌ W0 | ⬜ pending |
-| 03-01-02 | 01 | 1 | VER-04 | shared conformance helpers | `go test ./...` | ❌ W0 | ⬜ pending |
-| 03-02-01 | 02 | 2 | VER-04 | define-panic conformance | `go test ./... -run 'TestModelRulesConformance'` | ❌ W0 | ⬜ pending |
-| 03-03-01 | 03 | 2 | VER-04 | runtime/exemplar conformance | `go test ./... -run 'TestRuntimeRulesConformance'` | ❌ W0 | ⬜ pending |
-| 03-04-01 | 04 | 3 | VER-04 | matrix closeout and canonical gate | `bash scripts/verify-workspace.sh` | ❌ W0 | ⬜ pending |
+| 03-01-01 | 01 | 1 | VER-04 | matrix/classification | `test -f .planning/phases/03-rules-conformance-matrix/03-RULES-MATRIX.md && diff -u <(sed -n 's/^- \\(HSM[0-9][0-9]\\):.*/\\1/p' rules.md | sort) <(awk -F'|' '/^\\| HSM[0-9][0-9] / {gsub(/ /, "", $2); print $2}' .planning/phases/03-rules-conformance-matrix/03-RULES-MATRIX.md | sort) && awk -F'|' '/^\\| HSM[0-9][0-9] / {gsub(/ /, "", $3); if ($3 != "define_panic" && $3 != "runtime_semantic" && $3 != "exemplar") exit 1} END {exit 0}' .planning/phases/03-rules-conformance-matrix/03-RULES-MATRIX.md` | ✅ | ✅ green |
+| 03-01-02 | 01 | 1 | VER-04 | shared conformance helpers | `GOCACHE="$PWD/.cache/go-build" go test ./...` | ✅ | ✅ green |
+| 03-02-01 | 02 | 2 | VER-04 | define-panic conformance | `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestModelRulesConformance' -count=1` | ✅ | ✅ green |
+| 03-03-01 | 03 | 2 | VER-04 | runtime/exemplar conformance | `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestRuntimeRulesConformance' -count=1` | ✅ | ✅ green |
+| 03-04-01 | 04 | 3 | VER-04 | matrix closeout and canonical gate | `GOCACHE="$PWD/.cache/go-build" bash scripts/verify-workspace.sh` | ✅ | ✅ green |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*Status: ✅ green · ❌ red · ⚠️ flaky*
 
 ---
 
@@ -74,4 +83,4 @@ All phase behaviors have automated verification.
 - [x] Feedback latency < 20s
 - [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** complete
