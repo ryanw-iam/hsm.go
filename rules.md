@@ -1,0 +1,54 @@
+- HSM01: ALWAYS define a top-level `hsm.Initial(...)` for every model.
+- HSM02: ALWAYS define an explicit `hsm.Initial(...)` for any composite state that should automatically enter a nested substate.
+- HSM03: NEVER put entry actions on the top-level state machine.
+- HSM04: NEVER put exit actions on the top-level state machine.
+- HSM05: ALWAYS make an initial transition target a state nested under the state or machine that owns that initial pseudostate.
+- HSM06: NEVER put a guard on an initial transition.
+- HSM07: NEVER give an initial pseudostate more than one outgoing transition.
+- HSM08: ALWAYS declare `hsm.Source(...)`, `hsm.Target(...)`, `hsm.On(...)`, `hsm.OnSet(...)`, `hsm.OnCall(...)`, `hsm.After(...)`, `hsm.Every(...)`, `hsm.When(...)`, `hsm.Guard(...)`, and `hsm.Effect(...)` inside `hsm.Transition(...)`.
+- HSM09: ALWAYS declare `hsm.Entry(...)`, `hsm.Exit(...)`, `hsm.Activity(...)`, and `hsm.Defer(...)` inside `hsm.State(...)`.
+- HSM10: NEVER write a state transition with no trigger and expect implicit completion semantics; completion transitions without explicit events are not implemented.
+- HSM11: ALWAYS use explicit `CompletionEventKind` events when entry, exit, or activity behavior must trigger prioritized follow-on protocol semantics within the machine.
+- HSM12: NEVER use wildcard event names or pattern strings for transition triggers; use explicit events or `hsm.AnyEvent`.
+- HSM13: ALWAYS use `hsm.On(hsm.AnyEvent)` only as a catch-all fallback.
+- HSM14: ALWAYS assume specific event transitions take precedence over `hsm.AnyEvent` transitions.
+- HSM15: ALWAYS order multiple transitions for the same event in the same state from highest-priority guarded branch to lowest-priority fallback, because the first passing transition wins.
+- HSM16: ALWAYS model conditional branching with `hsm.Choice(...)` instead of ad hoc branching in transition targets.
+- HSM17: NEVER leave a `hsm.Choice(...)` without outgoing transitions.
+- HSM18: ALWAYS make the last outgoing transition from a `hsm.Choice(...)` the unguarded default branch.
+- HSM19: ALWAYS use valid relative or absolute state paths in `hsm.Source(...)` and `hsm.Target(...)`; every referenced vertex must exist.
+- HSM20: NEVER define a top-level transition with only one end specified; top-level transitions must have both source and target or neither.
+- HSM21: ALWAYS give an internal transition an `hsm.Effect(...)`; an internal transition without an effect is invalid.
+- HSM22: NEVER read or mutate the machine's internal context or state from outside the state machine.
+- HSM23: ALWAYS expose stateful machine data through `hsm.Attribute(...)` and interact with it via `Get` and `Set`.
+- HSM24: NEVER store machine attributes or durable machine state in `context.Context`.
+- HSM25: ALWAYS move external data into the machine through events or attributes, not through ad hoc external field mutation.
+- HSM26: ALWAYS use event payloads, including channels in the payload when needed, to coordinate request/response interactions with the machine.
+- HSM27: NEVER introduce mutexes to protect normal run-to-completion state-machine context access; the RTC model already serializes those reads and writes.
+- HSM28: ALWAYS prefer events, attributes, and state transitions over shared-memory synchronization inside the machine.
+- HSM29: ALWAYS use `hsm.Set(...)` or `Instance.Set(...)` to change model attributes when a state machine reaction is required.
+- HSM30: NEVER expect `Set` of the same value to emit an `OnSet` change event.
+- HSM31: ALWAYS use `hsm.OnSet("name")` inside a transition for attribute-driven behavior.
+- HSM32: NEVER use an empty attribute name, empty operation name, empty `OnSet` name, or empty `OnCall` name.
+- HSM33: NEVER define duplicate attributes or duplicate operations in the same model.
+- HSM34: ALWAYS define an `hsm.Operation(...)` before using `hsm.OnCall(...)` for that operation.
+- HSM35: ALWAYS use `hsm.Call(...)` or `Instance.Call(...)` for operation-triggered behavior instead of dispatching a fake call event by hand.
+- HSM36: ALWAYS use the machine context from `hsm.Context()` when dispatching fire-and-forget events that should be handled within that machine's lifetime.
+- HSM37: ALWAYS use `context.Background()` when dispatching fire-and-forget events that must outlive the machine's lifetime.
+- HSM38: NEVER use the transient behavior `ctx` for fire-and-forget dispatch unless cancellation with that specific behavior is intentional.
+- HSM39: ALWAYS use `ID()` for stable unique instance identity and routing, and `Name()` for the model name.
+- HSM40: NEVER use `Name()` as a unique instance identifier.
+- HSM41: ALWAYS use `QualifiedName()` when you need the full model path and `State()` when you need the current active state path.
+- HSM42: ALWAYS use `hsm.After(...)`, `hsm.Every(...)`, and `hsm.When(...)` only on transitions whose source is a real state.
+- HSM43: NEVER use a negative duration if you expect an `hsm.After(...)` or `hsm.Every(...)` trigger to fire.
+- HSM44: ALWAYS reserve `hsm.Activity(...)` for long-running or continuously waiting work.
+- HSM45: NEVER use `hsm.Activity(...)` for short synchronous work that belongs in entry, exit, or transition effects.
+- HSM46: ALWAYS make long-running `hsm.Activity(...)` code respect `ctx.Done()` promptly so the runtime can terminate it cleanly on exit.
+- HSM47: ALWAYS decompose state machines into behavioral units to prevent state explosion.
+- HSM48: ALWAYS use `hsm.Defer(...)` for events that must wait until the machine leaves the current state.
+- HSM49: NEVER attach transitions, activities, entry actions, or exit actions to a final state.
+- HSM50: ALWAYS use a history pseudostate inside a composite state, not at the top level.
+- HSM51: ALWAYS add an explicit fallback transition on a history pseudostate when first-time re-entry must go somewhere other than the parent state's initial path.
+- HSM52: ALWAYS guard `hsm.AnyEvent` transitions against internal lifecycle events unless the machine is intentionally meant to react to them.
+- HSM53: ALWAYS wait on the channel returned by `Dispatch`, `Set`, `Restart`, `Stop`, `DispatchAll`, or `DispatchTo` before asserting on post-transition state.
+- HSM54: NEVER use `hsm.AfterProcess(...)`, `hsm.AfterDispatch(...)`, `hsm.AfterEntry(...)`, `hsm.AfterExit(...)`, or `hsm.AfterExecuted(...)` as production synchronization mechanisms.

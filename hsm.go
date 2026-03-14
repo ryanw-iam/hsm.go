@@ -3227,7 +3227,9 @@ func (sm *hsm[T]) dispatch(ctx context.Context, event Event) <-chan struct{} {
 }
 
 // Dispatch sends an event to a specific state machine instance.
-// Returns a channel that closes when the event has been fully processed.
+// It returns a completion channel that closes when the event has been fully
+// processed. Waiting on that channel is the supported production
+// synchronization path before asserting on post-transition state.
 //
 // Example:
 //
@@ -3259,6 +3261,9 @@ func Get[T stringLike](ctx context.Context, hsm Instance, name T) (any, bool) {
 }
 
 // Set updates an attribute value and emits an OnSet change event.
+// It returns a completion channel that closes after the resulting processing
+// completes. Waiting on that channel is the supported production
+// synchronization path before asserting on post-transition state.
 func Set[T stringLike](ctx context.Context, hsm Instance, name T, value any) <-chan struct{} {
 	attributeName := string(name)
 	if hsm != nil {
@@ -3282,10 +3287,11 @@ func Call[T stringLike](ctx context.Context, hsm Instance, name T, args ...any) 
 	return nil, ErrMissingHSM
 }
 
-// DispatchAll sends an event to all state machine instances in the current context.
-// Returns a channel that closes when all instances have processed the event.
-// DispatchAll sends an event to all state machine instances in the current context.
-// Returns a channel that closes when all instances have processed the event.
+// DispatchAll sends an event to all state machine instances in the current
+// context. It returns a completion channel that closes when all selected
+// instances have processed the event. Waiting on that channel is the
+// supported production synchronization path before asserting on
+// post-transition state.
 //
 // Example:
 //
@@ -3297,6 +3303,11 @@ func DispatchAll(ctx context.Context, event Event) <-chan struct{} {
 	return DispatchTo[string](ctx, event)
 }
 
+// DispatchTo sends an event to the selected state machine instances in the
+// current context. It returns a completion channel that closes when all
+// matching instances have processed the event. Waiting on that channel is the
+// supported production synchronization path before asserting on
+// post-transition state.
 func DispatchTo[T stringLike](ctx context.Context, event Event, maybeIds ...T) <-chan struct{} {
 	if ctx == nil {
 		return closedChannel
@@ -3331,10 +3342,11 @@ func DispatchTo[T stringLike](ctx context.Context, event Event, maybeIds ...T) <
 }
 
 // AfterProcess returns a channel that closes when event processing completes.
-// If an event is provided, the channel closes after that specific event is processed.
-// If no event is provided, the channel closes after the next processing cycle completes.
-// This is useful for synchronizing with state machine execution in tests or
-// when coordinating external operations with state transitions.
+// If an event is provided, the channel closes after that specific event is
+// processed. If no event is provided, the channel closes after the next
+// processing cycle completes. Use this helper for tests and deterministic
+// observation only; production callers should wait on the completion channel
+// returned by Dispatch, Set, Restart, Stop, DispatchAll, or DispatchTo.
 func AfterProcess(ctx context.Context, hsm Instance, maybeEvent ...Event) <-chan struct{} {
 	if len(maybeEvent) > 0 {
 		ch, _ := hsm.channels().processed.LoadOrStore(maybeEvent[0].Name, make(chan struct{}))
@@ -3344,25 +3356,31 @@ func AfterProcess(ctx context.Context, hsm Instance, maybeEvent ...Event) <-chan
 	}
 }
 
-// AfterDispatch returns a channel that closes when the specified event is dispatched.
-// Unlike AfterProcess, this signals when the event is added to the queue, not when
-// processing completes. Useful for confirming event delivery before processing begins.
+// AfterDispatch returns a channel that closes when the specified event is
+// dispatched. Unlike AfterProcess, this signals when the event is added to
+// the queue, not when processing completes. Use this helper for tests and
+// deterministic observation only; it is not part of the supported production
+// synchronization path.
 func AfterDispatch(ctx context.Context, hsm Instance, event Event) <-chan struct{} {
 	ch, _ := hsm.channels().dispatched.LoadOrStore(event.Name, make(chan struct{}))
 	return ch.(chan struct{})
 }
 
-// AfterEntry returns a channel that closes when the specified state is entered.
-// The state parameter should be the fully qualified state path (e.g., "/parent/child").
-// Useful for waiting until a particular state becomes active.
+// AfterEntry returns a channel that closes when the specified state is
+// entered. The state parameter should be the fully qualified state path
+// (e.g., "/parent/child"). Use this helper for tests and deterministic
+// observation only; it is not part of the supported production
+// synchronization path.
 func AfterEntry[T stringLike](ctx context.Context, hsm Instance, state T) <-chan struct{} {
 	ch, _ := hsm.channels().entered.LoadOrStore(string(state), make(chan struct{}))
 	return ch.(chan struct{})
 }
 
 // AfterExit returns a channel that closes when the specified state is exited.
-// The state parameter should be the fully qualified state path (e.g., "/parent/child").
-// Useful for waiting until a particular state is no longer active.
+// The state parameter should be the fully qualified state path
+// (e.g., "/parent/child"). Use this helper for tests and deterministic
+// observation only; it is not part of the supported production
+// synchronization path.
 func AfterExit[T stringLike](ctx context.Context, hsm Instance, state T) <-chan struct{} {
 	ch, _ := hsm.channels().exited.LoadOrStore(string(state), make(chan struct{}))
 	return ch.(chan struct{})
@@ -3370,8 +3388,9 @@ func AfterExit[T stringLike](ctx context.Context, hsm Instance, state T) <-chan 
 
 // AfterExecuted returns a channel that closes when the specified state's
 // do-activity has completed execution. The state parameter should be the
-// fully qualified state path. Useful for waiting until a state's background
-// activity finishes.
+// fully qualified state path. Use this helper for tests and deterministic
+// observation only; it is not part of the supported production
+// synchronization path.
 func AfterExecuted[T stringLike](ctx context.Context, hsm Instance, state T) <-chan struct{} {
 	ch, _ := hsm.channels().executed.LoadOrStore(string(state), make(chan struct{}))
 	return ch.(chan struct{})
@@ -3417,7 +3436,10 @@ func InstancesFromContext(ctx context.Context) ([]Instance, bool) {
 }
 
 // Stop gracefully stops a state machine instance.
-// It cancels any running activities and prevents further event processing.
+// It returns a completion channel that closes after shutdown processing
+// finishes. Waiting on that channel is the supported production
+// synchronization path before asserting on post-transition state. If no
+// instance is available, Stop returns the shared closed completion channel.
 //
 // Example:
 //
@@ -3436,7 +3458,9 @@ func Stop(ctx context.Context, hsm Instance) <-chan struct{} {
 
 // Restart stops a state machine and restarts it from the initial state.
 // Optional data can be passed to reinitialize the state machine's data field.
-// Returns a channel that closes when the restart completes.
+// It returns a completion channel that closes when the restart completes.
+// Waiting on that channel is the supported production synchronization path
+// before asserting on post-transition state.
 func Restart(ctx context.Context, hsm Instance, maybeData ...any) <-chan struct{} {
 	return hsm.restart(ctx, maybeData...)
 }

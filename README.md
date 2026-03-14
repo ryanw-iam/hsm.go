@@ -43,20 +43,30 @@ Define your state machine structure and behavior using the declarative builder p
 	sm := hsm.Start(context.Background(), &MyHSM{}, &model)
 	sm.Dispatch(hsm.Event{Name: "moveToBar"})
 
+# Synchronization
+
+Wait on the completion channel returned by `Dispatch`, `Set`, `Restart`,
+`Stop`, `DispatchAll`, or `DispatchTo` before asserting on post-transition
+state. That completion channel is the supported production synchronization
+path.
+
+Use `AfterProcess`, `AfterDispatch`, `AfterEntry`, `AfterExit`, and
+`AfterExecuted` for tests and deterministic observation only.
+
 - `ErrNilHSM, ErrInvalidState, ErrMissingHSM, ErrMissingOperation, ErrInvalidOperation` — Error variables for common HSM error conditions.
 - `InitialEvent, ErrorEvent, AnyEvent, FinalEvent, InfiniteDuration` — Built-in event types and special duration constants used by the HSM runtime.
 - `Keys`
 - `NullKind, ElementKind, NamespaceKind, VertexKind, ConstraintKind, BehaviorKind, ConcurrentKind, StateMachineKind, StateKind, RegionKind, TransitionKind, InternalKind, ExternalKind, LocalKind, SelfKind, EventKind, TimeEventKind, CompletionEventKind, ChangeEventKind, CallEventKind, ErrorEventKind, PseudostateKind, InitialKind, FinalStateKind, ChoiceKind, ShallowHistoryKind, DeepHistoryKind, CustomKind` — Kind constants define the HSM type hierarchy using bit-packed inheritance.
 - `Version` — Version is the current semantic version of the hsm package.
-- `func AfterDispatch(ctx context.Context, hsm Instance, event Event) <-chan struct{}` — AfterDispatch returns a channel that closes when the specified event is dispatched.
-- `func AfterEntry(ctx context.Context, hsm Instance, state string) <-chan struct{}` — AfterEntry returns a channel that closes when the specified state is entered.
-- `func AfterExecuted(ctx context.Context, hsm Instance, state string) <-chan struct{}` — AfterExecuted returns a channel that closes when the specified state's do-activity has completed execution.
-- `func AfterExit(ctx context.Context, hsm Instance, state string) <-chan struct{}` — AfterExit returns a channel that closes when the specified state is exited.
-- `func AfterProcess(ctx context.Context, hsm Instance, maybeEvent ...Event) <-chan struct{}` — AfterProcess returns a channel that closes when event processing completes.
+- `func AfterDispatch(ctx context.Context, hsm Instance, event Event) <-chan struct{}` — AfterDispatch is for tests and deterministic observation only; it closes when the specified event is dispatched, not when processing completes.
+- `func AfterEntry(ctx context.Context, hsm Instance, state string) <-chan struct{}` — AfterEntry is for tests and deterministic observation only; it closes when the specified state is entered.
+- `func AfterExecuted(ctx context.Context, hsm Instance, state string) <-chan struct{}` — AfterExecuted is for tests and deterministic observation only; it closes when the specified state's do-activity has completed execution.
+- `func AfterExit(ctx context.Context, hsm Instance, state string) <-chan struct{}` — AfterExit is for tests and deterministic observation only; it closes when the specified state is exited.
+- `func AfterProcess(ctx context.Context, hsm Instance, maybeEvent ...Event) <-chan struct{}` — AfterProcess is for tests and deterministic observation only; production callers should wait on the supported completion channel path instead.
 - `func Call(ctx context.Context, hsm Instance, name string, args ...any) (any, error)` — Call dispatches an OnCall event and invokes the named operation.
-- `func DispatchAll(ctx context.Context, event Event) <-chan struct{}` — DispatchAll sends an event to all state machine instances in the current context.
-- `func DispatchTo(ctx context.Context, event Event, maybeIds ...string) <-chan struct{}`
-- `func Dispatch[T context.Context](ctx T, hsm Instance, event Event) <-chan struct{}` — Dispatch sends an event to a specific state machine instance.
+- `func DispatchAll(ctx context.Context, event Event) <-chan struct{}` — DispatchAll returns a completion channel for all selected instances and is part of the supported production synchronization path.
+- `func DispatchTo(ctx context.Context, event Event, maybeIds ...string) <-chan struct{}` — DispatchTo returns a completion channel for all matching instances and is part of the supported production synchronization path.
+- `func Dispatch[T context.Context](ctx T, hsm Instance, event Event) <-chan struct{}` — Dispatch returns a completion channel for a specific state machine instance and is part of the supported production synchronization path.
 - `func Get(ctx context.Context, hsm Instance, name string) (any, bool)` — Get reads an attribute value from the given state machine or from context.
 - `func ID(hsm Instance) string` — ID returns the unique identifier of a state machine instance.
 - `func IsAncestor(current, target string) bool` — IsAncestor checks whether current is an ancestor of target in the state hierarchy.
@@ -65,11 +75,11 @@ Define your state machine structure and behavior using the declarative builder p
 - `func Name(hsm Instance) string` — Name returns the simple name of a state machine instance (without path prefix).
 - `func New[T Instance](sm T, model *Model, maybeConfig ...Config) T`
 - `func QualifiedName(hsm Instance) string` — QualifiedName returns the fully qualified name of a state machine instance.
-- `func Restart(ctx context.Context, hsm Instance, maybeData ...any) <-chan struct{}` — Restart stops a state machine and restarts it from the initial state.
-- `func Set(ctx context.Context, hsm Instance, name string, value any) <-chan struct{}` — Set updates an attribute value and emits an OnSet change event.
+- `func Restart(ctx context.Context, hsm Instance, maybeData ...any) <-chan struct{}` — Restart returns a completion channel and is part of the supported production synchronization path.
+- `func Set(ctx context.Context, hsm Instance, name string, value any) <-chan struct{}` — Set returns a completion channel and is part of the supported production synchronization path.
 - `func Start[T Instance](ctx context.Context, sm T, maybeData ...any) T`
 - `func Started[T Instance](ctx context.Context, sm T, model *Model, maybeConfig ...Config) T` — Started creates and starts a new state machine instance with the given model and configuration.
-- `func Stop(ctx context.Context, hsm Instance) <-chan struct{}` — Stop gracefully stops a state machine instance.
+- `func Stop(ctx context.Context, hsm Instance) <-chan struct{}` — Stop returns a completion channel and is part of the supported production synchronization path; if no machine is available it returns an already-closed completion channel.
 - `type AttributeChange` — AttributeChange is the payload for attribute change events.
 - `type CallData` — CallData is the payload for call events.
 - `type Config` — Config provides configuration options for state machine initialization.
@@ -83,4 +93,3 @@ Define your state machine structure and behavior using the declarative builder p
 - `type Operation` — Operation is a function type that performs an action on a state machine.
 - `type RedefinableElement` — RedefinableElement is a function type that modifies a Model by adding or updating elements.
 - `type Snapshot`
-
