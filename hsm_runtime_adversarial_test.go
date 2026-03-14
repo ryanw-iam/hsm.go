@@ -218,9 +218,9 @@ func TestPublicHelperAdversarial(t *testing.T) {
 		})
 	})
 
-	t.Run("nil_stop_panic_remains_characterized", func(t *testing.T) {
-		assertPanicContains(t, "Stop nil hsm", "invalid memory address", func() {
-			hsm.Stop(context.Background(), nil)
+	t.Run("nil_stop_closes_immediately_without_panicking", func(t *testing.T) {
+		assertNoPanic(t, "Stop nil hsm", func() {
+			assertWaiterClosed(t, "stop with nil instance", hsm.Stop(context.Background(), nil))
 		})
 	})
 }
