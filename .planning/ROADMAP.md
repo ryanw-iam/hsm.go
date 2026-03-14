@@ -17,6 +17,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Rules Conformance Matrix** - Turn `rules.md` into executable conformance checks for valid and invalid models. (completed 2026-03-13)
 - [x] **Phase 4: Adversarial Regression Matrix** - Add fault injection, fuzz/property checks, and compatibility/performance regression coverage. Completed 2026-03-13.
 - [x] **Phase 5: Hardening Remediation Closure** - Fix issues exposed by the new verification bar and close the release gate cleanly. Completed 2026-03-14.
+- [ ] **Phase 6: Deterministic Runtime Verification Backfill** - Restore milestone-grade verification evidence for the deterministic runtime phase and close the Phase 2 audit orphan. Pending.
+- [ ] **Phase 7: Rules Conformance Verification Backfill** - Restore milestone-grade verification evidence for the rules conformance phase and close the Phase 3 audit orphan. Pending.
+- [ ] **Phase 8: Adversarial Verification Backfill** - Restore milestone-grade verification evidence for the adversarial regression phase and close the Phase 4 audit orphan. Pending.
 
 ## Phase Details
 
@@ -99,6 +102,48 @@ Plans:
 - [x] `05-02-PLAN.md` - Align `rules.md`, exported helper comments, and `README.md` around the hardened public synchronization contract.
 - [x] `05-03-PLAN.md` - Make the canonical gate phase-neutral, track contract artifacts cleanly, remove stale legacy CI, and prove the final release gate.
 
+### Phase 6: Deterministic Runtime Verification Backfill
+**Goal**: Phase 2 deterministic runtime work is re-verified with a milestone-grade verification artifact and reconciled validation evidence.
+**Depends on**: Phase 5
+**Requirements**: VER-03
+**Gap Closure**: Closes the `VER-03` audit orphan from `v1.0-MILESTONE-AUDIT.md`
+**Success Criteria** (what must be TRUE):
+  1. `.planning/phases/02-deterministic-runtime-semantics/02-VERIFICATION.md` exists and verifies the shipped deterministic runtime scope against current code.
+  2. Phase 2 validation evidence no longer presents executed checks as draft/pending-only audit debt.
+  3. Milestone audit traceability can point to a real Phase 2 verification artifact for `VER-03`.
+**Plans**: pending planning
+
+Plans:
+- [ ] To be planned
+
+### Phase 7: Rules Conformance Verification Backfill
+**Goal**: Phase 3 rules conformance work is re-verified with a milestone-grade verification artifact and reconciled validation evidence.
+**Depends on**: Phase 6
+**Requirements**: VER-04
+**Gap Closure**: Closes the `VER-04` audit orphan from `v1.0-MILESTONE-AUDIT.md`
+**Success Criteria** (what must be TRUE):
+  1. `.planning/phases/03-rules-conformance-matrix/03-VERIFICATION.md` exists and verifies the shipped rules conformance scope against current code.
+  2. Phase 3 validation evidence no longer presents executed checks as draft/pending-only audit debt.
+  3. Milestone audit traceability can point to a real Phase 3 verification artifact for `VER-04`.
+**Plans**: pending planning
+
+Plans:
+- [ ] To be planned
+
+### Phase 8: Adversarial Verification Backfill
+**Goal**: Phase 4 adversarial regression work is re-verified with a milestone-grade verification artifact and reconciled validation evidence.
+**Depends on**: Phase 7
+**Requirements**: VER-05
+**Gap Closure**: Closes the `VER-05` audit orphan from `v1.0-MILESTONE-AUDIT.md`
+**Success Criteria** (what must be TRUE):
+  1. `.planning/phases/04-adversarial-regression-matrix/04-VERIFICATION.md` exists and verifies the shipped adversarial scope against current code.
+  2. Phase 4 validation evidence no longer presents executed checks as draft/pending-only audit debt.
+  3. Milestone audit traceability can point to a real Phase 4 verification artifact for `VER-05`.
+**Plans**: pending planning
+
+Plans:
+- [ ] To be planned
+
 ## Progress
 
 **Execution Order:**
@@ -111,3 +156,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 3. Rules Conformance Matrix | 4/4 | Complete   | 2026-03-13 |
 | 4. Adversarial Regression Matrix | 3/3 | Complete | 2026-03-13 |
 | 5. Hardening Remediation Closure | 3/3 | Complete | 2026-03-14 |
+| 6. Deterministic Runtime Verification Backfill | 0/0 | Pending | - |
+| 7. Rules Conformance Verification Backfill | 0/0 | Pending | - |
+| 8. Adversarial Verification Backfill | 0/0 | Pending | - |

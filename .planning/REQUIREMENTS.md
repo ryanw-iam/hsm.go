@@ -13,15 +13,15 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 
 ### Runtime Determinism
 
-- [x] **VER-03**: Add deterministic validation for concurrency, timing, dispatch ordering, and race-sensitive behavior.
+- [ ] **VER-03**: Add deterministic validation for concurrency, timing, dispatch ordering, and race-sensitive behavior.
 
 ### Rules Conformance
 
-- [x] **VER-04**: Add conformance coverage for the library rules captured in `rules.md`.
+- [ ] **VER-04**: Add conformance coverage for the library rules captured in `rules.md`.
 
 ### Adversarial Regression
 
-- [x] **VER-05**: Add fault-injection, fuzz/property-style, and compatibility/performance regression checks where needed to close verification gaps.
+- [ ] **VER-05**: Add fault-injection, fuzz/property-style, and compatibility/performance regression checks where needed to close verification gaps.
 
 ### Remediation
 
@@ -33,7 +33,7 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 |-------------|-------|--------|
 | VER-01 | Phase 1 | Complete |
 | VER-02 | Phase 1 | Complete |
-| VER-03 | Phase 2 | Complete |
-| VER-04 | Phase 3 | Complete |
-| VER-05 | Phase 4 | Complete |
+| VER-03 | Phase 6 | Pending |
+| VER-04 | Phase 7 | Pending |
+| VER-05 | Phase 8 | Pending |
 | VER-06 | Phase 5 | Complete |
