@@ -127,10 +127,12 @@ Plans:
   1. `.planning/phases/03-rules-conformance-matrix/03-VERIFICATION.md` exists and verifies the shipped rules conformance scope against current code.
   2. Phase 3 validation evidence no longer presents executed checks as draft/pending-only audit debt.
   3. Milestone audit traceability can point to a real Phase 3 verification artifact for `VER-04`.
-**Plans**: pending planning
+**Plans**: 3 plans
 
 Plans:
-- [ ] To be planned
+- [ ] `07-01-PLAN.md` - Fresh-rerun the shipped Phase 3 rules slice and canonical workspace gate, allowing only tiny in-slice correction if current evidence disproves an existing claim.
+- [ ] `07-02-PLAN.md` - Backfill `03-VERIFICATION.md` and reconcile `03-VALIDATION.md` in place from executed Phase 7 evidence.
+- [ ] `07-03-PLAN.md` - Close `VER-04` traceability in `REQUIREMENTS.md` and regenerate the milestone audit without hiding the remaining Phase 8 / `VER-05` debt.
 
 ### Phase 8: Adversarial Verification Backfill
 **Goal**: Phase 4 adversarial regression work is re-verified with a milestone-grade verification artifact and reconciled validation evidence.
@@ -159,5 +161,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 4. Adversarial Regression Matrix | 3/3 | Complete | 2026-03-13 |
 | 5. Hardening Remediation Closure | 3/3 | Complete | 2026-03-14 |
 | 6. Deterministic Runtime Verification Backfill | 3/3 | Complete | 2026-03-14 |
-| 7. Rules Conformance Verification Backfill | 0/0 | Pending | - |
+| 7. Rules Conformance Verification Backfill | 0/3 | Pending | - |
 | 8. Adversarial Verification Backfill | 0/0 | Pending | - |
