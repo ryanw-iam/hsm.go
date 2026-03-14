@@ -3425,7 +3425,13 @@ func InstancesFromContext(ctx context.Context) ([]Instance, bool) {
 //	// ... use state machine ...
 //	hsm.Stop(sm)
 func Stop(ctx context.Context, hsm Instance) <-chan struct{} {
-	return hsm.stop(ctx)
+	if hsm != nil {
+		return hsm.stop(ctx)
+	}
+	if hsm, ok := FromContext(ctx); ok {
+		return hsm.stop(ctx)
+	}
+	return closedChannel
 }
 
 // Restart stops a state machine and restarts it from the initial state.
