@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Deterministic Runtime Semantics** - Prove concurrency, timing, ordering, and race-sensitive behavior deterministically. Completed 2026-03-13.
 - [x] **Phase 3: Rules Conformance Matrix** - Turn `rules.md` into executable conformance checks for valid and invalid models. (completed 2026-03-13)
 - [x] **Phase 4: Adversarial Regression Matrix** - Add fault injection, fuzz/property checks, and compatibility/performance regression coverage. Completed 2026-03-13.
-- [ ] **Phase 5: Hardening Remediation Closure** - Fix issues exposed by the new verification bar and close the release gate cleanly.
+- [x] **Phase 5: Hardening Remediation Closure** - Fix issues exposed by the new verification bar and close the release gate cleanly. Completed 2026-03-14.
 
 ## Phase Details
 
@@ -97,7 +97,7 @@ Plans:
 Plans:
 - [x] `05-01-PLAN.md` - Align `Stop(nil)` with the hardened hostile-helper contract and lock the seam behind focused regression coverage.
 - [x] `05-02-PLAN.md` - Align `rules.md`, exported helper comments, and `README.md` around the hardened public synchronization contract.
-- [ ] `05-03-PLAN.md` - Make the canonical gate phase-neutral, track contract artifacts cleanly, remove stale legacy CI, and prove the final release gate.
+- [x] `05-03-PLAN.md` - Make the canonical gate phase-neutral, track contract artifacts cleanly, remove stale legacy CI, and prove the final release gate.
 
 ## Progress
 
@@ -110,4 +110,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Deterministic Runtime Semantics | 3/3 | Complete | 2026-03-13 |
 | 3. Rules Conformance Matrix | 4/4 | Complete   | 2026-03-13 |
 | 4. Adversarial Regression Matrix | 3/3 | Complete | 2026-03-13 |
-| 5. Hardening Remediation Closure | 2/3 | In Progress | - |
+| 5. Hardening Remediation Closure | 3/3 | Complete | 2026-03-14 |

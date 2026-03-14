@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 5 of 5 (Hardening Remediation Closure)
 current_plan: 3
-status: executing
-stopped_at: Completed 05-hardening-remediation-closure-02-PLAN.md
-last_updated: "2026-03-14T03:20:19.455Z"
+status: ready_for_verification
+stopped_at: Completed 05-hardening-remediation-closure-03-PLAN.md
+last_updated: "2026-03-14T03:24:02.958Z"
 last_activity: 2026-03-14
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 16
-  completed_plans: 15
-  percent: 94
+  completed_plans: 16
+  percent: 100
 ---
 
 # Project State
@@ -23,24 +23,24 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** `hsm.go` must be a trustworthy, release-gated runtime dependency whose behavior is exhaustively verified across normal, edge, failure, concurrency, timing, and recovery paths.
-**Current focus:** Phase 5 - Hardening Remediation Closure
+**Current focus:** Milestone verification and closeout
 
 ## Current Position
 
 Current Phase: 5 of 5 (Hardening Remediation Closure)
 Current Plan: 3
 Total Plans in Phase: 3
-Status: In progress
+Status: Ready for verification
 Last Activity: 2026-03-14
 
-Progress: [█████████░] 94%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 15
-- Average duration: 10 min
-- Total execution time: 2h 23m
+- Total plans completed: 16
+- Average duration: 9 min
+- Total execution time: 2h 30m
 
 **By Phase:**
 
@@ -50,14 +50,14 @@ Progress: [█████████░] 94%
 | 2 | 3 | 18 min | 6 min |
 | 3 | 4 | 26 min | 6 min |
 | 4 | 3 | 9 min | 3 min |
-| 5 | 2 | 4 min | 2 min |
+| 5 | 3 | 11 min | 4 min |
 
 **Recent Trend:**
-- Last 5 plans: 04-01, 04-02, 04-03, 05-01, 05-02
+- Last 5 plans: 04-02, 04-03, 05-01, 05-02, 05-03
 - Trend: Improving
 
 **Latest Metric:**
-- Phase 05-hardening-remediation-closure P02 | 2 min | 1 task | 3 files
+- Phase 05-hardening-remediation-closure P03 | 7 min | 1 task | 2 files
 
 ## Accumulated Context
 
@@ -96,6 +96,8 @@ Recent decisions affecting current work:
 - [Phase 05-hardening-remediation-closure]: Nil-stop remediation stays confined to the public helper wrapper and does not alter stop lifecycle or timeout internals.
 - [Phase 05-hardening-remediation-closure]: Completion channels returned by Dispatch, Set, Restart, Stop, DispatchAll, and DispatchTo remain the only supported production synchronization path.
 - [Phase 05-hardening-remediation-closure]: AfterProcess, AfterDispatch, AfterEntry, AfterExit, and AfterExecuted are documented as test and deterministic observation helpers, not general synchronization primitives.
+- [Phase 05-hardening-remediation-closure]: Keep `bash scripts/verify-workspace.sh` as the only release gate entrypoint and change wording only.
+- [Phase 05-hardening-remediation-closure]: Delete `.travis.yml` outright because GitHub Actions is already the active canonical CI path.
 
 ### Pending Todos
 
@@ -107,6 +109,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-14T03:19:59.928Z
-Stopped at: Completed 05-hardening-remediation-closure-02-PLAN.md
+Last session: 2026-03-14T03:24:02.956Z
+Stopped at: Completed 05-hardening-remediation-closure-03-PLAN.md
 Resume file: None
