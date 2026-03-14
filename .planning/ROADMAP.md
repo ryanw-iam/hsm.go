@@ -131,7 +131,7 @@ Plans:
 
 Plans:
 - [x] `07-01-PLAN.md` - Fresh-rerun the shipped Phase 3 rules slice and canonical workspace gate, allowing only tiny in-slice correction if current evidence disproves an existing claim.
-- [ ] `07-02-PLAN.md` - Backfill `03-VERIFICATION.md` and reconcile `03-VALIDATION.md` in place from executed Phase 7 evidence.
+- [x] `07-02-PLAN.md` - Backfill `03-VERIFICATION.md` and reconcile `03-VALIDATION.md` in place from executed Phase 7 evidence.
 - [ ] `07-03-PLAN.md` - Close `VER-04` traceability in `REQUIREMENTS.md` and regenerate the milestone audit without hiding the remaining Phase 8 / `VER-05` debt.
 
 ### Phase 8: Adversarial Verification Backfill
@@ -161,5 +161,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 4. Adversarial Regression Matrix | 3/3 | Complete | 2026-03-13 |
 | 5. Hardening Remediation Closure | 3/3 | Complete | 2026-03-14 |
 | 6. Deterministic Runtime Verification Backfill | 3/3 | Complete | 2026-03-14 |
-| 7. Rules Conformance Verification Backfill | 1/3 | In Progress | - |
+| 7. Rules Conformance Verification Backfill | 2/3 | In Progress | - |
 | 8. Adversarial Verification Backfill | 0/0 | Pending | - |
