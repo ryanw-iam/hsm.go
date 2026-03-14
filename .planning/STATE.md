@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 5 of 5 (Hardening Remediation Closure)
-current_plan: 2
+current_plan: 3
 status: executing
-stopped_at: Completed 05-hardening-remediation-closure-01-PLAN.md
-last_updated: "2026-03-14T03:14:30.682Z"
+stopped_at: Completed 05-hardening-remediation-closure-02-PLAN.md
+last_updated: "2026-03-14T03:20:19.455Z"
 last_activity: 2026-03-14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 16
-  completed_plans: 14
-  percent: 88
+  completed_plans: 15
+  percent: 94
 ---
 
 # Project State
@@ -28,19 +28,19 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 ## Current Position
 
 Current Phase: 5 of 5 (Hardening Remediation Closure)
-Current Plan: 2
+Current Plan: 3
 Total Plans in Phase: 3
 Status: In progress
 Last Activity: 2026-03-14
 
-Progress: [█████████░] 88%
+Progress: [█████████░] 94%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 14
+- Total plans completed: 15
 - Average duration: 10 min
-- Total execution time: 2h 21m
+- Total execution time: 2h 23m
 
 **By Phase:**
 
@@ -50,14 +50,14 @@ Progress: [█████████░] 88%
 | 2 | 3 | 18 min | 6 min |
 | 3 | 4 | 26 min | 6 min |
 | 4 | 3 | 9 min | 3 min |
-| 5 | 1 | 2 min | 2 min |
+| 5 | 2 | 4 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-04, 04-01, 04-02, 04-03, 05-01
+- Last 5 plans: 04-01, 04-02, 04-03, 05-01, 05-02
 - Trend: Improving
 
 **Latest Metric:**
-- Phase 05-hardening-remediation-closure P01 | 2 min | 1 task | 2 files
+- Phase 05-hardening-remediation-closure P02 | 2 min | 1 task | 3 files
 
 ## Accumulated Context
 
@@ -94,6 +94,8 @@ Recent decisions affecting current work:
 - [Phase 04-adversarial-regression-matrix]: Run benchmark smoke in the canonical verifier with fixed 20-iteration benchmem checks on the existing root and muid benchmark names.
 - [Phase 05-hardening-remediation-closure]: Stop(nil) should degrade to the shared closed waiter contract instead of remaining a one-off panic seam.
 - [Phase 05-hardening-remediation-closure]: Nil-stop remediation stays confined to the public helper wrapper and does not alter stop lifecycle or timeout internals.
+- [Phase 05-hardening-remediation-closure]: Completion channels returned by Dispatch, Set, Restart, Stop, DispatchAll, and DispatchTo remain the only supported production synchronization path.
+- [Phase 05-hardening-remediation-closure]: AfterProcess, AfterDispatch, AfterEntry, AfterExit, and AfterExecuted are documented as test and deterministic observation helpers, not general synchronization primitives.
 
 ### Pending Todos
 
@@ -105,6 +107,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-14T03:14:30.680Z
-Stopped at: Completed 05-hardening-remediation-closure-01-PLAN.md
+Last session: 2026-03-14T03:19:59.928Z
+Stopped at: Completed 05-hardening-remediation-closure-02-PLAN.md
 Resume file: None
