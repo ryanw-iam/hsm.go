@@ -111,10 +111,12 @@ Plans:
   1. `.planning/phases/02-deterministic-runtime-semantics/02-VERIFICATION.md` exists and verifies the shipped deterministic runtime scope against current code.
   2. Phase 2 validation evidence no longer presents executed checks as draft/pending-only audit debt.
   3. Milestone audit traceability can point to a real Phase 2 verification artifact for `VER-03`.
-**Plans**: pending planning
+**Plans**: 3 plans
 
 Plans:
-- [ ] To be planned
+- [ ] `06-01-PLAN.md` - Re-verify the shipped deterministic runtime slice and reserve only tiny Phase 2 runtime fixes if fresh evidence disproves an existing claim.
+- [ ] `06-02-PLAN.md` - Backfill `02-VERIFICATION.md` and reconcile `02-VALIDATION.md` to executed deterministic runtime evidence.
+- [ ] `06-03-PLAN.md` - Repair `VER-03` top-level traceability and regenerate the milestone audit without hiding later backfill gaps.
 
 ### Phase 7: Rules Conformance Verification Backfill
 **Goal**: Phase 3 rules conformance work is re-verified with a milestone-grade verification artifact and reconciled validation evidence.
@@ -147,7 +149,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -156,6 +158,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 3. Rules Conformance Matrix | 4/4 | Complete   | 2026-03-13 |
 | 4. Adversarial Regression Matrix | 3/3 | Complete | 2026-03-13 |
 | 5. Hardening Remediation Closure | 3/3 | Complete | 2026-03-14 |
-| 6. Deterministic Runtime Verification Backfill | 0/0 | Pending | - |
+| 6. Deterministic Runtime Verification Backfill | 0/3 | Planned | - |
 | 7. Rules Conformance Verification Backfill | 0/0 | Pending | - |
 | 8. Adversarial Verification Backfill | 0/0 | Pending | - |
