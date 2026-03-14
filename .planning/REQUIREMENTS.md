@@ -25,7 +25,7 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 
 ### Remediation
 
-- [ ] **VER-06**: Fix any correctness, determinism, observability, or maintainability issues uncovered by the new verification bar.
+- [x] **VER-06**: Fix any correctness, determinism, observability, or maintainability issues uncovered by the new verification bar.
 
 ## Traceability
 
@@ -36,4 +36,4 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 | VER-03 | Phase 2 | Complete |
 | VER-04 | Phase 3 | Complete |
 | VER-05 | Phase 4 | Complete |
-| VER-06 | Phase 5 | Pending |
+| VER-06 | Phase 5 | Complete |

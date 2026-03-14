@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 5 of 5 (Hardening Remediation Closure)
-current_plan: 1
-status: ready_to_execute
-stopped_at: Phase 5 planned and ready to execute 05-01
-last_updated: "2026-03-13T21:35:00Z"
-last_activity: 2026-03-13 - Planned Phase 5 into three sequential closure plans covering nil-stop helper consistency, public contract alignment, and final release-clean gate hygiene
+current_plan: 2
+status: executing
+stopped_at: Completed 05-hardening-remediation-closure-01-PLAN.md
+last_updated: "2026-03-14T03:14:30.682Z"
+last_activity: 2026-03-14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 16
-  completed_plans: 13
-  percent: 81
+  completed_plans: 14
+  percent: 88
 ---
 
 # Project State
@@ -28,19 +28,19 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 ## Current Position
 
 Current Phase: 5 of 5 (Hardening Remediation Closure)
-Current Plan: 1 of 3 (Stop nil helper consistency)
+Current Plan: 2
 Total Plans in Phase: 3
-Status: Ready to execute
-Last Activity: 2026-03-13 - Planned Phase 5 into three closure plans and prepared execution starting with nil-stop helper consistency
+Status: In progress
+Last Activity: 2026-03-14
 
-Progress: [████████░░] 81%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13
-- Average duration: 11 min
-- Total execution time: 2h 19m
+- Total plans completed: 14
+- Average duration: 10 min
+- Total execution time: 2h 21m
 
 **By Phase:**
 
@@ -50,13 +50,14 @@ Progress: [████████░░] 81%
 | 2 | 3 | 18 min | 6 min |
 | 3 | 4 | 26 min | 6 min |
 | 4 | 3 | 9 min | 3 min |
+| 5 | 1 | 2 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-03, 03-04, 04-01, 04-02, 04-03
+- Last 5 plans: 03-04, 04-01, 04-02, 04-03, 05-01
 - Trend: Improving
 
 **Latest Metric:**
-- Phase 04-adversarial-regression-matrix P03 | 3 min | 2 tasks | 3 files
+- Phase 05-hardening-remediation-closure P01 | 2 min | 1 task | 2 files
 
 ## Accumulated Context
 
@@ -91,6 +92,8 @@ Recent decisions affecting current work:
 - [Phase 04-adversarial-regression-matrix]: Adversarial runtime evidence should reuse ErrorEvent transitions, waiter channels, and the deterministic clock harness rather than introducing a second fault runner.
 - [Phase 04-adversarial-regression-matrix]: Keep root Dispatch and Set regression contracts at measured allocation ceilings instead of wall-clock performance thresholds.
 - [Phase 04-adversarial-regression-matrix]: Run benchmark smoke in the canonical verifier with fixed 20-iteration benchmem checks on the existing root and muid benchmark names.
+- [Phase 05-hardening-remediation-closure]: Stop(nil) should degrade to the shared closed waiter contract instead of remaining a one-off panic seam.
+- [Phase 05-hardening-remediation-closure]: Nil-stop remediation stays confined to the public helper wrapper and does not alter stop lifecycle or timeout internals.
 
 ### Pending Todos
 
@@ -102,6 +105,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-13T21:16:40.732Z
-Stopped at: Phase 5 ready for planning
-Resume file: .planning/ROADMAP.md
+Last session: 2026-03-14T03:14:30.680Z
+Stopped at: Completed 05-hardening-remediation-closure-01-PLAN.md
+Resume file: None
