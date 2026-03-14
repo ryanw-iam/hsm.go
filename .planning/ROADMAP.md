@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Rules Conformance Matrix** - Turn `rules.md` into executable conformance checks for valid and invalid models. (completed 2026-03-13)
 - [x] **Phase 4: Adversarial Regression Matrix** - Add fault injection, fuzz/property checks, and compatibility/performance regression coverage. Completed 2026-03-13.
 - [x] **Phase 5: Hardening Remediation Closure** - Fix issues exposed by the new verification bar and close the release gate cleanly. Completed 2026-03-14.
-- [ ] **Phase 6: Deterministic Runtime Verification Backfill** - Restore milestone-grade verification evidence for the deterministic runtime phase and close the Phase 2 audit orphan. Pending.
+- [ ] **Phase 6: Deterministic Runtime Verification Backfill** - Restore milestone-grade verification evidence for the deterministic runtime phase and close the Phase 2 audit orphan. In progress (1/3 plans complete).
 - [ ] **Phase 7: Rules Conformance Verification Backfill** - Restore milestone-grade verification evidence for the rules conformance phase and close the Phase 3 audit orphan. Pending.
 - [ ] **Phase 8: Adversarial Verification Backfill** - Restore milestone-grade verification evidence for the adversarial regression phase and close the Phase 4 audit orphan. Pending.
 
@@ -114,7 +114,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] `06-01-PLAN.md` - Re-verify the shipped deterministic runtime slice and reserve only tiny Phase 2 runtime fixes if fresh evidence disproves an existing claim.
+- [x] `06-01-PLAN.md` - Re-verify the shipped deterministic runtime slice and reserve only tiny Phase 2 runtime fixes if fresh evidence disproves an existing claim.
 - [ ] `06-02-PLAN.md` - Backfill `02-VERIFICATION.md` and reconcile `02-VALIDATION.md` to executed deterministic runtime evidence.
 - [ ] `06-03-PLAN.md` - Repair `VER-03` top-level traceability and regenerate the milestone audit without hiding later backfill gaps.
 
