@@ -14,7 +14,7 @@ run_go_test() {
   go test "$@"
 }
 
-section "phase 4 workspace verification"
+section "canonical workspace verification"
 echo "repo: $(pwd)"
 
 run_go_test "baseline: hsm" ./...
@@ -33,4 +33,4 @@ run_go_test "blocking: muid benchmark smoke" ./muid -run '^$' -bench '^Benchmark
 run_go_test "blocking: race-short workspace" -race -short ./... ./kind/... ./muid/...
 
 section "result"
-echo "phase 4 workspace verification passed"
+echo "workspace release gate passed"
