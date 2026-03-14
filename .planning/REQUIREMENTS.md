@@ -39,3 +39,5 @@ Brownfield verification hardening for the `hsm.go` workspace only. These v1 requ
 | VER-06 | Phase 5 | Complete |
 
 `VER-03` stays mapped to Phase 6 in this table because the closure work was the Phase 6 backfill of the missing Phase 2 verification artifact at `.planning/phases/02-deterministic-runtime-semantics/02-VERIFICATION.md`, not a new runtime implementation change.
+
+`VER-04` stays mapped to Phase 7 in this table because the closure work was the Phase 7 backfill of the missing Phase 3 verification artifact at `.planning/phases/03-rules-conformance-matrix/03-VERIFICATION.md`, not a new rules-conformance implementation change.
