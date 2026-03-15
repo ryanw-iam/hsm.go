@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Hardening Remediation Closure** - Fix issues exposed by the new verification bar and close the release gate cleanly. Completed 2026-03-14.
 - [x] **Phase 6: Deterministic Runtime Verification Backfill** - Restore milestone-grade verification evidence for the deterministic runtime phase and close the Phase 2 audit orphan. Completed 2026-03-14.
 - [x] **Phase 7: Rules Conformance Verification Backfill** - Restore milestone-grade verification evidence for the rules conformance phase and close the Phase 3 audit orphan. Completed 2026-03-14.
-- [ ] **Phase 8: Adversarial Verification Backfill** - Restore milestone-grade verification evidence for the adversarial regression phase and close the Phase 4 audit orphan. Pending.
+- [x] **Phase 8: Adversarial Verification Backfill** - Restore milestone-grade verification evidence for the adversarial regression phase and close the Phase 4 audit orphan. Completed 2026-03-15.
 
 ## Phase Details
 
@@ -146,9 +146,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] `08-01-PLAN.md` - Fresh-rerun the shipped Phase 4 adversarial slice and canonical workspace gate, allowing only tiny in-slice correction if current evidence disproves an existing claim.
-- [ ] `08-02-PLAN.md` - Backfill `04-VERIFICATION.md` and reconcile `04-VALIDATION.md` in place from executed Phase 8 evidence.
-- [ ] `08-03-PLAN.md` - Close `VER-05` traceability in `REQUIREMENTS.md` and regenerate the milestone audit from the new Phase 4 verification artifact.
+- [x] `08-01-PLAN.md` - Fresh-rerun the shipped Phase 4 adversarial slice and canonical workspace gate, allowing only tiny in-slice correction if current evidence disproves an existing claim.
+- [x] `08-02-PLAN.md` - Backfill `04-VERIFICATION.md` and reconcile `04-VALIDATION.md` in place from executed Phase 8 evidence.
+- [x] `08-03-PLAN.md` - Close `VER-05` traceability in `REQUIREMENTS.md` and regenerate the milestone audit from the new Phase 4 verification artifact.
 
 ## Progress
 
@@ -164,4 +164,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 5. Hardening Remediation Closure | 3/3 | Complete | 2026-03-14 |
 | 6. Deterministic Runtime Verification Backfill | 3/3 | Complete | 2026-03-14 |
 | 7. Rules Conformance Verification Backfill | 3/3 | Complete | 2026-03-14 |
-| 8. Adversarial Verification Backfill | 0/3 | Ready to Execute | - |
+| 8. Adversarial Verification Backfill | 3/3 | Complete | 2026-03-15 |
