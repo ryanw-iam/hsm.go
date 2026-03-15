@@ -49,7 +49,7 @@ completed: 2026-03-15
 
 Each task was committed atomically:
 
-1. **Task 1: Re-verify the shipped adversarial slice and keep any correction microscopic** - `TBD` (docs)
+1. **Task 1: Re-verify the shipped adversarial slice and keep any correction microscopic** - `2530401` (docs)
 
 ## Files Created/Modified
 
@@ -85,4 +85,4 @@ The adversarial verification evidence is ready for the Phase 4 artifact and vali
 ## Self-Check: PASSED
 
 - FOUND: `.planning/phases/08-adversarial-verification-backfill/08-01-SUMMARY.md`
-- PENDING: task commit hash will be filled after commit
+- FOUND: `2530401`
