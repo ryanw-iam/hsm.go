@@ -1,15 +1,15 @@
 ---
 phase: 4
 slug: adversarial-regression-matrix
-status: draft
+status: passed
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-03-13
 ---
 
-# Phase 4 — Validation Strategy
+# Phase 4 — Validation Record
 
-> Per-phase validation contract for feedback sampling during execution.
+> Executed validation record for the shipped Phase 4 adversarial-regression scope, reconciled during the Phase 8 backfill.
 
 ---
 
@@ -17,20 +17,30 @@ created: 2026-03-13
 
 | Property | Value |
 |----------|-------|
-| **Framework** | `go test` |
-| **Config file** | `go.mod` |
-| **Quick run command** | `GOCACHE=$(pwd)/.cache/go-build go test ./... ./muid/... -run 'Test.*Adversarial|Test.*Regression|Fuzz'` |
-| **Full suite command** | `GOCACHE=$(pwd)/.cache/go-build bash scripts/verify-workspace.sh` |
+| **Framework** | go test |
+| **Config file** | none |
+| **Quick run command** | `GOCACHE="$PWD/.cache/go-build" go test ./... ./muid/... -run 'TestRuntimeAdversarial|TestPublicHelperAdversarial|FuzzHSMEventScriptProperties|FuzzMUIDGeneratorProperties|Test.*RegressionAllocs' -count=1` |
+| **Full suite command** | `GOCACHE="$PWD/.cache/go-build" bash scripts/verify-workspace.sh` |
 | **Estimated runtime** | ~30 seconds |
 
 ---
 
 ## Sampling Rate
 
-- **After every task commit:** Run `GOCACHE=$(pwd)/.cache/go-build go test ./... ./muid/... -run 'Test.*Adversarial|Test.*Regression|Fuzz'`
-- **After every plan wave:** Run `GOCACHE=$(pwd)/.cache/go-build bash scripts/verify-workspace.sh`
+- **After every task commit:** Run the smallest relevant adversarial or regression command with `GOCACHE="$PWD/.cache/go-build"`.
+- **After every plan wave:** Run `GOCACHE="$PWD/.cache/go-build" bash scripts/verify-workspace.sh`
 - **Before `$gsd-verify-work`:** Full suite must be green
 - **Max feedback latency:** 30 seconds
+
+---
+
+## Validation Architecture
+
+- Helper/runtime guard coverage stays anchored to `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestRuntimeStopTimeoutDispatchesErrorEventDeterministically|TestRuntimeRulesConformance' -count=1`.
+- Runtime adversarial coverage is isolated behind `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestRuntimeAdversarial|TestPublicHelperAdversarial' -count=1`.
+- Root and `muid` property evidence replay through ordinary `go test` with checked-in corpora via `FuzzHSMEventScriptProperties` and `FuzzMUIDGeneratorProperties`.
+- Allocation regression evidence stays explicit and bounded through package-scoped `Test.*RegressionAllocs` reruns.
+- The canonical workspace gate remains `GOCACHE="$PWD/.cache/go-build" bash scripts/verify-workspace.sh`, so adversarial, fuzz-seed, allocation, benchmark-smoke, and race-short evidence all terminate in the same release entrypoint.
 
 ---
 
@@ -38,26 +48,22 @@ created: 2026-03-13
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 04-01-01 | 01 | 1 | VER-05 | unit-helper | `GOCACHE=$(pwd)/.cache/go-build go test ./... -run 'TestRuntimeStopTimeoutDispatchesErrorEventDeterministically|TestRuntimeRulesConformance'` | ✅ existing | ⬜ pending |
-| 04-01-02 | 01 | 1 | VER-05 | unit-adversarial | `GOCACHE=$(pwd)/.cache/go-build go test ./... -run 'TestRuntimeAdversarial|TestPublicHelperAdversarial'` | ❌ planned | ⬜ pending |
-| 04-02-01 | 02 | 1 | VER-05 | fuzz-seed-root | `GOCACHE=$(pwd)/.cache/go-build go test ./... -run 'FuzzHSMEventScriptProperties'` | ❌ planned | ⬜ pending |
-| 04-02-02 | 02 | 1 | VER-05 | fuzz-seed-muid | `GOCACHE=$(pwd)/.cache/go-build go test ./muid/... -run 'FuzzMUIDGeneratorProperties'` | ❌ planned | ⬜ pending |
-| 04-03-01 | 03 | 2 | VER-05 | alloc-regression | `GOCACHE=$(pwd)/.cache/go-build go test ./... ./muid/... -run 'Test.*RegressionAllocs'` | ❌ planned | ⬜ pending |
-| 04-03-02 | 03 | 2 | VER-05 | canonical-gate | `GOCACHE=$(pwd)/.cache/go-build bash scripts/verify-workspace.sh` | ✅ existing | ⬜ pending |
+| 04-01-01 | 01 | 1 | VER-05 | unit-helper | `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestRuntimeStopTimeoutDispatchesErrorEventDeterministically|TestRuntimeRulesConformance' -count=1` | ✅ | ✅ green |
+| 04-01-02 | 01 | 1 | VER-05 | unit-adversarial | `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'TestRuntimeAdversarial|TestPublicHelperAdversarial' -count=1` | ✅ | ✅ green |
+| 04-02-01 | 02 | 1 | VER-05 | fuzz-seed-root | `GOCACHE="$PWD/.cache/go-build" go test ./... -run 'FuzzHSMEventScriptProperties' -count=1` | ✅ | ✅ green |
+| 04-02-02 | 02 | 1 | VER-05 | fuzz-seed-muid | `GOCACHE="$PWD/.cache/go-build" go test ./muid/... -run 'FuzzMUIDGeneratorProperties' -count=1` | ✅ | ✅ green |
+| 04-03-01 | 03 | 2 | VER-05 | alloc-regression | `bash -lc 'GOCACHE="$PWD/.cache/go-build" go test ./... -run '\''Test.*RegressionAllocs'\'' -count=1 && GOCACHE="$PWD/.cache/go-build" go test ./muid/... -run '\''Test.*RegressionAllocs'\'' -count=1'` | ✅ | ✅ green |
+| 04-03-02 | 03 | 2 | VER-05 | canonical-gate | `GOCACHE="$PWD/.cache/go-build" bash scripts/verify-workspace.sh` | ✅ | ✅ green |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*Status: ✅ green · ❌ red · ⚠️ flaky*
 
 ---
 
-## Wave Structure
-
-- **Wave 1:** 04-01 and 04-02 run in parallel. 04-01 owns helper/runtime fault-injection work. 04-02 stays limited to stable event-script and `muid` property coverage so it does not depend on 04-01 remediation.
-- **Wave 2:** 04-03 depends on both Wave 1 plans and wires the canonical gate to execute allocation regression checks explicitly before benchmark smoke.
-
 ## Wave 0 Requirements
 
-- [x] Existing deterministic harness, waiters, clock injection, and canonical verifier already exist from Phases 1-3.
-- [x] No extra Wave 0 scaffolding is required before Phase 4 execution.
+- [ ] `.planning/phases/04-adversarial-regression-matrix/04-01-PLAN.md` — adversarial runtime and helper-contract plan
+- [ ] `.planning/phases/04-adversarial-regression-matrix/04-02-PLAN.md` — bounded property and seed-corpus plan
+- [ ] `.planning/phases/04-adversarial-regression-matrix/04-03-PLAN.md` — allocation regression and canonical verifier plan
 
 ---
 
@@ -76,4 +82,4 @@ All phase behaviors have automated verification.
 - [x] Feedback latency < 30s
 - [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** complete
