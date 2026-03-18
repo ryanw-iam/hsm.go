@@ -5,3 +5,5 @@ next
 *.log
 *.tmp
 *.temp
+.cache/
+.planning/

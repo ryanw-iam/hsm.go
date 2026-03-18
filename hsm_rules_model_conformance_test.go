@@ -263,47 +263,35 @@ func TestModelRulesConformance(t *testing.T) {
 		}
 	})
 
-	runRule("HSM20", "top_level_transition_requires_both_ends_or_neither", func(t *testing.T) {
-		cases := []struct {
-			name  string
-			build func()
-		}{
-			{
-				name: "source_only",
-				build: func() {
-					hsm.Define(
-						"BadTopLevelTransitionSourceOnly",
-						hsm.State("idle"),
-						hsm.Transition(
-							hsm.On(modelRulesAdvanceEvent),
-							hsm.Source("idle"),
-							hsm.Effect(modelRulesNoBehavior),
-						),
-						hsm.Initial(hsm.Target("idle")),
-					)
-				},
-			},
-			{
-				name: "target_only",
-				build: func() {
-					hsm.Define(
-						"BadTopLevelTransitionTargetOnly",
-						hsm.State("idle"),
-						hsm.Transition(
-							hsm.On(modelRulesAdvanceEvent),
-							hsm.Target("idle"),
-						),
-						hsm.Initial(hsm.Target("idle")),
-					)
-				},
-			},
-		}
-		for _, tc := range cases {
-			tc := tc
-			t.Run(tc.name, func(t *testing.T) {
-				assertPanicContains(t, "HSM20/"+tc.name, "top level transitions must have a source and target, or no source and target", tc.build)
+	runRule("HSM20", "top_level_target_requires_source", func(t *testing.T) {
+		t.Run("source_only_internal_allowed", func(t *testing.T) {
+			assertNoPanic(t, "HSM20/source_only_internal_allowed", func() {
+				hsm.Define(
+					"TopLevelInternalTransitionAllowed",
+					hsm.State("idle"),
+					hsm.Transition(
+						hsm.On(modelRulesAdvanceEvent),
+						hsm.Source("idle"),
+						hsm.Effect(modelRulesNoBehavior),
+					),
+					hsm.Initial(hsm.Target("idle")),
+				)
 			})
-		}
+		})
+
+		t.Run("target_only", func(t *testing.T) {
+			assertPanicContains(t, "HSM20/target_only", "top level transitions with a target must also define a source", func() {
+				hsm.Define(
+					"BadTopLevelTransitionTargetOnly",
+					hsm.State("idle"),
+					hsm.Transition(
+						hsm.On(modelRulesAdvanceEvent),
+						hsm.Target("idle"),
+					),
+					hsm.Initial(hsm.Target("idle")),
+				)
+			})
+		})
 	})
 
 	runRule("HSM21", "internal_transition_requires_effect", func(t *testing.T) {

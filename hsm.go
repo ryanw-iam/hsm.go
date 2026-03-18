@@ -316,14 +316,12 @@ type paths struct {
 
 type transition struct {
 	element
-	source    string
-	target    string
-	hasSource bool
-	hasTarget bool
-	guard     string
-	effect    []string
-	events    []string
-	paths     map[string]paths
+	source string
+	target string
+	guard  string
+	effect []string
+	events []string
+	paths  map[string]paths
 }
 
 func (transition *transition) Guard() string {
@@ -930,8 +928,8 @@ func Transition[T redefinableOrString](nameOrPartialElement T, partialElements .
 			}
 		} else {
 			model.push(func(model *Model, stack []Element) Element {
-				if owner.QualifiedName() == model.QualifiedName() && transition.hasSource != transition.hasTarget {
-					traceback(fmt.Errorf("top level transitions must have a source and target, or no source and target"))
+				if owner.QualifiedName() == model.QualifiedName() && transition.source == model.QualifiedName() && transition.target != "" {
+					traceback(fmt.Errorf("top level transitions with a target must also define a source"))
 				}
 				if kind.Is(transition.kind, InternalKind) && len(transition.effect) == 0 {
 					traceback(fmt.Errorf("internal transitions require an effect"))
@@ -1011,7 +1009,6 @@ func Source[T redefinableOrString](nameOrPartialElement T) RedefinableElement {
 			})
 		}
 		transition.source = name
-		transition.hasSource = true
 		return owner
 	}
 }
@@ -1092,7 +1089,6 @@ func Target[T redefinableOrString](nameOrPartialElement T) RedefinableElement {
 		}
 
 		transition.target = qualifiedName
-		transition.hasTarget = true
 		return transition
 	}
 }
