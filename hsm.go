@@ -3183,6 +3183,7 @@ func (sm *hsm[T]) takeSnapshot() Snapshot {
 
 					events = append(events, EventSnapshot{
 						Name:   eventName,
+						Kind:   event.Kind,
 						Target: transition.Target(),
 						Guard:  hasGuard,
 						Schema: event.Schema,
