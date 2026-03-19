@@ -1923,8 +1923,9 @@ LOOP_START:
 	return false
 }
 
-type EventDetail struct {
-	Event  string
+type EventSnapshot struct {
+	Name   string
+	Kind   uint64 `json:"-"`
 	Target string
 	Guard  bool
 	Schema any
@@ -1936,7 +1937,7 @@ type Snapshot struct {
 	State         string
 	Attributes    map[string]any
 	QueueLen      int
-	Events        []EventDetail
+	Events        []EventSnapshot
 }
 
 // HSM is the base type that should be embedded in custom state machine types.
@@ -3163,7 +3164,7 @@ func (sm *hsm[T]) takeSnapshot() Snapshot {
 		return true
 	})
 
-	var events []EventDetail
+	var events []EventSnapshot
 	currentQualifiedName := state.QualifiedName()
 
 	// Get transitions for the current state
@@ -3180,8 +3181,8 @@ func (sm *hsm[T]) takeSnapshot() Snapshot {
 						}
 					}
 
-					events = append(events, EventDetail{
-						Event:  eventName,
+					events = append(events, EventSnapshot{
+						Name:   eventName,
 						Target: transition.Target(),
 						Guard:  hasGuard,
 						Schema: event.Schema,
