@@ -3171,7 +3171,7 @@ func (sm *hsm[T]) takeSnapshot() Snapshot {
 	if stateTransitions, ok := sm.model.TransitionMap[currentQualifiedName]; ok {
 		for eventName, transitions := range stateTransitions {
 			// Check if this event is EventKind
-			if event, exists := sm.model.events[eventName]; exists && event.Kind == EventKind {
+			if event, exists := sm.model.events[eventName]; exists && kind.Is(event.Kind, EventKind) {
 				for _, transition := range transitions {
 					// Check if transition has a guard
 					hasGuard := false
