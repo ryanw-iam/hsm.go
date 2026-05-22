@@ -91,5 +91,6 @@ Use `AfterProcess`, `AfterDispatch`, `AfterEntry`, `AfterExit`, and
 - `type Instance` — Instance represents an active state machine instance that can process events and track state.
 - `type Model` — Model represents the complete state machine model definition.
 - `type Operation` — Operation is a function type that performs an action on a state machine.
+- `type Queue` — Queue provides injectable event buffering for a state machine instance.
 - `type RedefinableElement` — RedefinableElement is a function type that modifies a Model by adding or updating elements.
 - `type Snapshot`

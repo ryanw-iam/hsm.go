@@ -515,13 +515,49 @@ type queue struct {
 
 var empty = Event{}
 
-func (q *queue) len() int {
+// Queue provides injectable event buffering for a state machine instance.
+// Push receives events into the runtime, Pop selects the next event to process,
+// and Len reports the number of currently buffered events.
+type Queue struct {
+	Push func(ctx context.Context, event Event)
+	Pop  func(ctx context.Context) (Event, bool)
+	Len  func(ctx context.Context) int
+}
+
+func newQueue() Queue {
+	q := &queue{}
+	return Queue{
+		Push: q.push,
+		Pop:  q.pop,
+		Len:  q.len,
+	}
+}
+
+func (q Queue) withDefaults() Queue {
+	if q.isZero() {
+		return newQueue()
+	}
+	return q.validate()
+}
+
+func (q Queue) validate() Queue {
+	if q.Push == nil || q.Pop == nil || q.Len == nil {
+		panic(ErrInvalidOperation)
+	}
+	return q
+}
+
+func (q Queue) isZero() bool {
+	return q.Push == nil && q.Pop == nil && q.Len == nil
+}
+
+func (q *queue) len(context.Context) int {
 	q.mutex.RLock()
 	defer q.mutex.RUnlock()
 	return len(q.fifo) + len(q.lifo)
 }
 
-func (q *queue) pop() (Event, bool) {
+func (q *queue) pop(context.Context) (Event, bool) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 	switch {
@@ -538,15 +574,17 @@ func (q *queue) pop() (Event, bool) {
 	}
 }
 
-func (q *queue) push(events ...Event) {
+func (q *queue) push(_ context.Context, event Event) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
-	for _, event := range events {
-		if kind.Is(event.Kind, CompletionEventKind) {
-			q.lifo = append(q.lifo, event)
-		} else {
-			q.fifo = append(q.fifo, event)
-		}
+	q.pushLocked(event)
+}
+
+func (q *queue) pushLocked(event Event) {
+	if kind.Is(event.Kind, CompletionEventKind) {
+		q.lifo = append(q.lifo, event)
+	} else {
+		q.fifo = append(q.fifo, event)
 	}
 }
 
@@ -2298,7 +2336,7 @@ type hsm[T Instance] struct {
 	cancel         context.CancelFunc
 	model          *Model
 	active         map[string]*active
-	queue          queue
+	queue          Queue
 	attributes     sync.Map
 	historyShallow map[string]string
 	historyDeep    map[string]string
@@ -2317,6 +2355,8 @@ type Config struct {
 	ActivityTimeout time.Duration
 	// Clock overrides the timer functions used by the state machine runtime.
 	Clock Clock
+	// Queue overrides the event buffer used by the state machine runtime.
+	Queue Queue
 	// Name is the name of the state machine.
 	Name string
 	// Data to be passed during initialization
@@ -2377,7 +2417,7 @@ func New[T Instance](sm T, model *Model, maybeConfig ...Config) T {
 		cancel:         func() {},
 		model:          model,
 		instance:       sm,
-		queue:          queue{},
+		queue:          newQueue(),
 		active:         map[string]*active{},
 		historyShallow: map[string]string{},
 		historyDeep:    map[string]string{},
@@ -2388,6 +2428,7 @@ func New[T Instance](sm T, model *Model, maybeConfig ...Config) T {
 		config := maybeConfig[0]
 		hsm.timeouts.activity = config.ActivityTimeout
 		hsm.clock = config.Clock.withDefaults()
+		hsm.queue = config.Queue.withDefaults()
 		hsm.behavior.qualifiedName = config.Name
 		hsm.behavior.id = config.ID
 	}
@@ -2502,7 +2543,7 @@ func (sm *hsm[T]) stop(ctx context.Context) <-chan struct{} {
 			instances.Delete(sm.behavior.id)
 		}
 
-		hasQueuedEvents := sm.queue.len() > 0
+		hasQueuedEvents := sm.queue.Len(sm.context) > 0
 		sm.processing.wUnlock()
 		if hasQueuedEvents && sm.processing.tryLock() {
 			go sm.process(context.WithoutCancel(ctx))
@@ -3062,21 +3103,25 @@ func (sm *hsm[T]) process(ctx context.Context) {
 		return
 	}
 	var deferred []Event
-	event, ok := sm.queue.pop()
+	event, ok := sm.queue.Pop(ctx)
 	for ok {
 		transitionTaken, isDeferred := sm.processEvent(ctx, &event)
 		if isDeferred {
 			deferred = append(deferred, event)
-			event, _ = sm.queue.pop()
+			event, _ = sm.queue.Pop(ctx)
 			continue
 		}
 		if transitionTaken && len(deferred) > 0 {
-			sm.queue.push(deferred...)
+			for _, deferredEvent := range deferred {
+				sm.queue.Push(ctx, deferredEvent)
+			}
 			deferred = nil
 		}
-		event, ok = sm.queue.pop()
+		event, ok = sm.queue.Pop(ctx)
 	}
-	sm.queue.push(deferred...)
+	for _, deferredEvent := range deferred {
+		sm.queue.Push(ctx, deferredEvent)
+	}
 }
 
 func (sm *hsm[T]) processEvent(ctx context.Context, event *Event) (transitionTaken bool, deferred bool) {
@@ -3198,7 +3243,7 @@ func (sm *hsm[T]) takeSnapshot() Snapshot {
 		QualifiedName: sm.behavior.qualifiedName,
 		State:         state.QualifiedName(),
 		Attributes:    attributes,
-		QueueLen:      sm.queue.len(),
+		QueueLen:      sm.queue.Len(sm.context),
 		Events:        events,
 	}
 }
@@ -3214,7 +3259,7 @@ func (sm *hsm[T]) dispatch(ctx context.Context, event Event) <-chan struct{} {
 	if event.Kind == 0 {
 		event.Kind = EventKind
 	}
-	sm.queue.push(event)
+	sm.queue.Push(ctx, event)
 	if sm.processing.tryLock() {
 		go sm.process(context.WithoutCancel(ctx))
 	}
