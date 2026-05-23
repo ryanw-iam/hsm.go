@@ -219,6 +219,63 @@ func TestRuntimeCompletionEventsPreemptQueuedEvents(t *testing.T) {
 	}
 }
 
+func TestRuntimeCompletionEventsBypassCustomRegularQueue(t *testing.T) {
+	triggerEvent := hsm.Event{Name: "trigger"}
+	regularEvent := hsm.Event{Name: "regular"}
+	priorityEvent := hsm.Event{Name: "priority", Kind: hsm.CompletionEventKind}
+	trace := &runtimeTrace{}
+	customQueue := newRecordingQueue()
+
+	model := hsm.Define(
+		"CompletionBypassQueueHSM",
+		hsm.Initial(hsm.Target("idle")),
+		hsm.State("idle",
+			hsm.Transition(
+				hsm.On(triggerEvent),
+				hsm.Effect(func(ctx context.Context, sm *THSM, event hsm.Event) {
+					trace.record("trigger")
+					hsm.Dispatch(ctx, sm, regularEvent)
+					hsm.Dispatch(ctx, sm, priorityEvent)
+				}),
+			),
+			hsm.Transition(
+				hsm.On(priorityEvent),
+				hsm.Target("../priority"),
+				hsm.Effect(func(ctx context.Context, sm *THSM, event hsm.Event) {
+					trace.record("priority")
+				}),
+			),
+			hsm.Transition(
+				hsm.On(regularEvent),
+				hsm.Target("../regular"),
+				hsm.Effect(func(ctx context.Context, sm *THSM, event hsm.Event) {
+					trace.record("regular")
+				}),
+			),
+		),
+		hsm.State("priority"),
+		hsm.State("regular"),
+	)
+
+	sm := hsm.Started(context.Background(), &THSM{}, &model, hsm.Config{Queue: customQueue.Queue()})
+	priorityProcessed := hsm.AfterProcess(sm.Context(), sm, priorityEvent)
+	regularProcessed := hsm.AfterProcess(sm.Context(), sm, regularEvent)
+
+	awaitWaiter(t, "trigger dispatch cycle", hsm.Dispatch(sm.Context(), sm, triggerEvent))
+	awaitWaiter(t, "priority completion event processing", priorityProcessed)
+	awaitWaiter(t, "regular event processing after priority transition", regularProcessed)
+
+	if sm.State() != "/CompletionBypassQueueHSM/priority" {
+		t.Fatalf("expected priority state after completion-event preemption, got %s", sm.State())
+	}
+	if pushed := customQueue.pushedNames(); !slices.Equal(pushed, []string{triggerEvent.Name, regularEvent.Name}) {
+		t.Fatalf("expected custom regular queue to receive only regular events, got %v", pushed)
+	}
+	if entries := trace.snapshot(); !slices.Equal(entries, []string{"trigger", "priority"}) {
+		t.Fatalf("expected completion-priority trace, got %v", entries)
+	}
+}
+
 func TestRuntimeDispatchAllReachesEveryStartedInstance(t *testing.T) {
 	broadcastEvent := hsm.Event{Name: "broadcast"}
 	model := buildMultiInstanceDispatchModel(broadcastEvent)

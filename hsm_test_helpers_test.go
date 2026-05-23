@@ -157,6 +157,12 @@ type runtimeTrace struct {
 	entries []string
 }
 
+type recordingQueue struct {
+	mutex  sync.Mutex
+	events []hsm.Event
+	pushed []string
+}
+
 type errorEventRecorder struct {
 	errors chan error
 }
@@ -171,6 +177,48 @@ func (t *runtimeTrace) snapshot() []string {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 	return append([]string(nil), t.entries...)
+}
+
+func newRecordingQueue() *recordingQueue {
+	return &recordingQueue{}
+}
+
+func (q *recordingQueue) Queue() hsm.Queue {
+	return hsm.Queue{
+		Push: q.push,
+		Pop:  q.pop,
+		Len:  q.len,
+	}
+}
+
+func (q *recordingQueue) push(_ context.Context, event hsm.Event) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	q.pushed = append(q.pushed, event.Name)
+	q.events = append(q.events, event)
+}
+
+func (q *recordingQueue) pop(context.Context) (hsm.Event, bool) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	if len(q.events) == 0 {
+		return hsm.Event{}, false
+	}
+	event := q.events[0]
+	q.events = q.events[1:]
+	return event, true
+}
+
+func (q *recordingQueue) len(context.Context) int {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	return len(q.events)
+}
+
+func (q *recordingQueue) pushedNames() []string {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	return append([]string(nil), q.pushed...)
 }
 
 func newErrorEventRecorder() *errorEventRecorder {

@@ -507,21 +507,21 @@ var closedChannel = func() chan struct{} {
 }()
 
 type queue struct {
-	mutex sync.RWMutex
-	lifo  []Event // lifo
-	fifo  []Event // fifo
-
+	mutex  sync.RWMutex
+	events []Event
 }
 
 var empty = Event{}
 
-// Queue provides injectable event buffering for a state machine instance.
-// Push receives events into the runtime, Pop selects the next event to process,
-// and Len reports the number of currently buffered events.
+// Queue provides injectable buffering for regular state machine events.
+// Completion events are always stored in the runtime-owned LIFO side of Queue
+// and are selected before the configurable regular-event queue.
 type Queue struct {
-	Push func(ctx context.Context, event Event)
-	Pop  func(ctx context.Context) (Event, bool)
-	Len  func(ctx context.Context) int
+	Push  func(ctx context.Context, event Event)
+	Pop   func(ctx context.Context) (Event, bool)
+	Len   func(ctx context.Context) int
+	mutex sync.RWMutex
+	lifo  []Event
 }
 
 func newQueue() Queue {
@@ -554,38 +554,53 @@ func (q Queue) isZero() bool {
 func (q *queue) len(context.Context) int {
 	q.mutex.RLock()
 	defer q.mutex.RUnlock()
-	return len(q.fifo) + len(q.lifo)
+	return len(q.events)
 }
 
 func (q *queue) pop(context.Context) (Event, bool) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
-	switch {
-	case len(q.lifo) > 0:
-		event := q.lifo[len(q.lifo)-1]
-		q.lifo = q.lifo[:len(q.lifo)-1]
-		return event, true
-	case len(q.fifo) > 0:
-		event := q.fifo[0]
-		q.fifo = q.fifo[1:]
-		return event, true
-	default:
+	if len(q.events) == 0 {
 		return empty, false
 	}
+	event := q.events[0]
+	q.events = q.events[1:]
+	return event, true
 }
 
 func (q *queue) push(_ context.Context, event Event) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
-	q.pushLocked(event)
+	q.events = append(q.events, event)
 }
 
-func (q *queue) pushLocked(event Event) {
-	if kind.Is(event.Kind, CompletionEventKind) {
-		q.lifo = append(q.lifo, event)
-	} else {
-		q.fifo = append(q.fifo, event)
+func (q *Queue) len(ctx context.Context) int {
+	q.mutex.RLock()
+	lifoLen := len(q.lifo)
+	q.mutex.RUnlock()
+	return lifoLen + q.Len(ctx)
+}
+
+func (q *Queue) pop(ctx context.Context) (Event, bool) {
+	q.mutex.Lock()
+	if len(q.lifo) > 0 {
+		event := q.lifo[len(q.lifo)-1]
+		q.lifo = q.lifo[:len(q.lifo)-1]
+		q.mutex.Unlock()
+		return event, true
 	}
+	q.mutex.Unlock()
+	return q.Pop(ctx)
+}
+
+func (q *Queue) push(ctx context.Context, event Event) {
+	if kind.Is(event.Kind, CompletionEventKind) {
+		q.mutex.Lock()
+		q.lifo = append(q.lifo, event)
+		q.mutex.Unlock()
+		return
+	}
+	q.Push(ctx, event)
 }
 
 func apply(model *Model, stack []Element, partials ...RedefinableElement) {
@@ -2543,7 +2558,7 @@ func (sm *hsm[T]) stop(ctx context.Context) <-chan struct{} {
 			instances.Delete(sm.behavior.id)
 		}
 
-		hasQueuedEvents := sm.queue.Len(sm.context) > 0
+		hasQueuedEvents := sm.queue.len(sm.context) > 0
 		sm.processing.wUnlock()
 		if hasQueuedEvents && sm.processing.tryLock() {
 			go sm.process(context.WithoutCancel(ctx))
@@ -3103,24 +3118,24 @@ func (sm *hsm[T]) process(ctx context.Context) {
 		return
 	}
 	var deferred []Event
-	event, ok := sm.queue.Pop(ctx)
+	event, ok := sm.queue.pop(ctx)
 	for ok {
 		transitionTaken, isDeferred := sm.processEvent(ctx, &event)
 		if isDeferred {
 			deferred = append(deferred, event)
-			event, _ = sm.queue.Pop(ctx)
+			event, _ = sm.queue.pop(ctx)
 			continue
 		}
 		if transitionTaken && len(deferred) > 0 {
 			for _, deferredEvent := range deferred {
-				sm.queue.Push(ctx, deferredEvent)
+				sm.queue.push(ctx, deferredEvent)
 			}
 			deferred = nil
 		}
-		event, ok = sm.queue.Pop(ctx)
+		event, ok = sm.queue.pop(ctx)
 	}
 	for _, deferredEvent := range deferred {
-		sm.queue.Push(ctx, deferredEvent)
+		sm.queue.push(ctx, deferredEvent)
 	}
 }
 
@@ -3243,7 +3258,7 @@ func (sm *hsm[T]) takeSnapshot() Snapshot {
 		QualifiedName: sm.behavior.qualifiedName,
 		State:         state.QualifiedName(),
 		Attributes:    attributes,
-		QueueLen:      sm.queue.Len(sm.context),
+		QueueLen:      sm.queue.len(sm.context),
 		Events:        events,
 	}
 }
@@ -3259,7 +3274,7 @@ func (sm *hsm[T]) dispatch(ctx context.Context, event Event) <-chan struct{} {
 	if event.Kind == 0 {
 		event.Kind = EventKind
 	}
-	sm.queue.Push(ctx, event)
+	sm.queue.push(ctx, event)
 	if sm.processing.tryLock() {
 		go sm.process(context.WithoutCancel(ctx))
 	}
