@@ -11,6 +11,46 @@ import (
 )
 
 func TestRuntimeAdversarial(t *testing.T) {
+	t.Run("custom_queue_push_error_dispatches_error_event", func(t *testing.T) {
+		queueErr := errors.New("queue push failed")
+		recorder := newErrorEventRecorder()
+		model := hsm.Define(
+			"QueuePushErrorHSM",
+			hsm.Initial(hsm.Target("idle")),
+			hsm.State("idle"),
+			hsm.State("failed"),
+			hsm.Transition(
+				hsm.On(hsm.ErrorEvent),
+				hsm.Source("idle"),
+				hsm.Target("failed"),
+				hsm.Effect(recorder.effect),
+			),
+		)
+		queue := hsm.Queue{
+			Push: func(context.Context, hsm.Event) error {
+				return queueErr
+			},
+			Pop: func(context.Context) (hsm.Event, bool, error) {
+				return hsm.Event{}, false, nil
+			},
+			Len: func(context.Context) (int, error) {
+				return 0, nil
+			},
+		}
+
+		sm := hsm.Started(context.Background(), &THSM{}, &model, hsm.Config{Queue: queue})
+		errorProcessed := hsm.AfterProcess(sm.Context(), sm, hsm.ErrorEvent)
+		failedEntered := hsm.AfterEntry(sm.Context(), sm, "/QueuePushErrorHSM/failed")
+
+		awaitWaiter(t, "queue push failure dispatch", hsm.Dispatch(sm.Context(), sm, hsm.Event{Name: "go"}))
+		awaitWaiter(t, "queue push error processing", errorProcessed)
+		awaitWaiter(t, "queue push error failed entry", failedEntered)
+
+		if err := recorder.await(t, "queue push failure"); !errors.Is(err, queueErr) {
+			t.Fatalf("expected queue push error %v, got %v", queueErr, err)
+		}
+	})
+
 	t.Run("concurrent_behavior_panics_dispatch_error_event_and_stop_settles", func(t *testing.T) {
 		recorder := newErrorEventRecorder()
 		activityStarted := make(chan struct{})

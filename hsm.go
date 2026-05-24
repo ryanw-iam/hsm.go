@@ -517,9 +517,9 @@ var empty = Event{}
 // Completion events are always stored in the runtime-owned LIFO side of Queue
 // and are selected before the configurable regular-event queue.
 type Queue struct {
-	Push  func(ctx context.Context, event Event)
-	Pop   func(ctx context.Context) (Event, bool)
-	Len   func(ctx context.Context) int
+	Push  func(ctx context.Context, event Event) error
+	Pop   func(ctx context.Context) (Event, bool, error)
+	Len   func(ctx context.Context) (int, error)
 	mutex sync.RWMutex
 	lifo  []Event
 }
@@ -551,56 +551,58 @@ func (q Queue) isZero() bool {
 	return q.Push == nil && q.Pop == nil && q.Len == nil
 }
 
-func (q *queue) len(context.Context) int {
+func (q *queue) len(context.Context) (int, error) {
 	q.mutex.RLock()
 	defer q.mutex.RUnlock()
-	return len(q.events)
+	return len(q.events), nil
 }
 
-func (q *queue) pop(context.Context) (Event, bool) {
+func (q *queue) pop(context.Context) (Event, bool, error) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 	if len(q.events) == 0 {
-		return empty, false
+		return empty, false, nil
 	}
 	event := q.events[0]
 	q.events = q.events[1:]
-	return event, true
+	return event, true, nil
 }
 
-func (q *queue) push(_ context.Context, event Event) {
+func (q *queue) push(_ context.Context, event Event) error {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 	q.events = append(q.events, event)
+	return nil
 }
 
-func (q *Queue) len(ctx context.Context) int {
+func (q *Queue) len(ctx context.Context) (int, error) {
 	q.mutex.RLock()
 	lifoLen := len(q.lifo)
 	q.mutex.RUnlock()
-	return lifoLen + q.Len(ctx)
+	fifoLen, err := q.Len(ctx)
+	return lifoLen + fifoLen, err
 }
 
-func (q *Queue) pop(ctx context.Context) (Event, bool) {
+func (q *Queue) pop(ctx context.Context) (Event, bool, error) {
 	q.mutex.Lock()
 	if len(q.lifo) > 0 {
 		event := q.lifo[len(q.lifo)-1]
 		q.lifo = q.lifo[:len(q.lifo)-1]
 		q.mutex.Unlock()
-		return event, true
+		return event, true, nil
 	}
 	q.mutex.Unlock()
 	return q.Pop(ctx)
 }
 
-func (q *Queue) push(ctx context.Context, event Event) {
+func (q *Queue) push(ctx context.Context, event Event) error {
 	if kind.Is(event.Kind, CompletionEventKind) {
 		q.mutex.Lock()
 		q.lifo = append(q.lifo, event)
 		q.mutex.Unlock()
-		return
+		return nil
 	}
-	q.Push(ctx, event)
+	return q.Push(ctx, event)
 }
 
 func apply(model *Model, stack []Element, partials ...RedefinableElement) {
@@ -2558,7 +2560,8 @@ func (sm *hsm[T]) stop(ctx context.Context) <-chan struct{} {
 			instances.Delete(sm.behavior.id)
 		}
 
-		hasQueuedEvents := sm.queue.len(sm.context) > 0
+		queueLen, _ := sm.queue.len(sm.context)
+		hasQueuedEvents := queueLen > 0
 		sm.processing.wUnlock()
 		if hasQueuedEvents && sm.processing.tryLock() {
 			go sm.process(context.WithoutCancel(ctx))
@@ -3118,24 +3121,46 @@ func (sm *hsm[T]) process(ctx context.Context) {
 		return
 	}
 	var deferred []Event
-	event, ok := sm.queue.pop(ctx)
+	event, ok := sm.pop(ctx)
 	for ok {
 		transitionTaken, isDeferred := sm.processEvent(ctx, &event)
 		if isDeferred {
 			deferred = append(deferred, event)
-			event, _ = sm.queue.pop(ctx)
+			event, ok = sm.pop(ctx)
 			continue
 		}
 		if transitionTaken && len(deferred) > 0 {
 			for _, deferredEvent := range deferred {
-				sm.queue.push(ctx, deferredEvent)
+				sm.push(ctx, deferredEvent)
 			}
 			deferred = nil
 		}
-		event, ok = sm.queue.pop(ctx)
+		event, ok = sm.pop(ctx)
 	}
 	for _, deferredEvent := range deferred {
-		sm.queue.push(ctx, deferredEvent)
+		sm.push(ctx, deferredEvent)
+	}
+}
+
+func (sm *hsm[T]) push(ctx context.Context, event Event) {
+	if sm == nil {
+		return
+	}
+	if err := sm.queue.push(ctx, event); err != nil && !kind.Is(event.Kind, ErrorEventKind) {
+		_ = sm.queue.push(ctx, ErrorEvent.WithData(err))
+	}
+}
+
+func (sm *hsm[T]) pop(ctx context.Context) (Event, bool) {
+	if sm == nil {
+		return empty, false
+	}
+	for {
+		event, ok, err := sm.queue.pop(ctx)
+		if err == nil {
+			return event, ok
+		}
+		_ = sm.queue.push(ctx, ErrorEvent.WithData(err))
 	}
 }
 
@@ -3253,12 +3278,13 @@ func (sm *hsm[T]) takeSnapshot() Snapshot {
 		}
 	}
 
+	queueLen, _ := sm.queue.len(sm.context)
 	return Snapshot{
 		ID:            sm.behavior.id,
 		QualifiedName: sm.behavior.qualifiedName,
 		State:         state.QualifiedName(),
 		Attributes:    attributes,
-		QueueLen:      sm.queue.len(sm.context),
+		QueueLen:      queueLen,
 		Events:        events,
 	}
 }
@@ -3274,7 +3300,7 @@ func (sm *hsm[T]) dispatch(ctx context.Context, event Event) <-chan struct{} {
 	if event.Kind == 0 {
 		event.Kind = EventKind
 	}
-	sm.queue.push(ctx, event)
+	sm.push(ctx, event)
 	if sm.processing.tryLock() {
 		go sm.process(context.WithoutCancel(ctx))
 	}

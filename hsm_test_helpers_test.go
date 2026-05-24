@@ -191,28 +191,29 @@ func (q *recordingQueue) Queue() hsm.Queue {
 	}
 }
 
-func (q *recordingQueue) push(_ context.Context, event hsm.Event) {
+func (q *recordingQueue) push(_ context.Context, event hsm.Event) error {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 	q.pushed = append(q.pushed, event.Name)
 	q.events = append(q.events, event)
+	return nil
 }
 
-func (q *recordingQueue) pop(context.Context) (hsm.Event, bool) {
+func (q *recordingQueue) pop(context.Context) (hsm.Event, bool, error) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 	if len(q.events) == 0 {
-		return hsm.Event{}, false
+		return hsm.Event{}, false, nil
 	}
 	event := q.events[0]
 	q.events = q.events[1:]
-	return event, true
+	return event, true, nil
 }
 
-func (q *recordingQueue) len(context.Context) int {
+func (q *recordingQueue) len(context.Context) (int, error) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
-	return len(q.events)
+	return len(q.events), nil
 }
 
 func (q *recordingQueue) pushedNames() []string {
