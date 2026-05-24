@@ -744,6 +744,56 @@ func TestAttributeDefaultAndOnSet(t *testing.T) {
 	}
 }
 
+func TestSetRejectsUnknownAndExactTypeMismatch(t *testing.T) {
+	changeCh := make(chan hsm.AttributeChange, 1)
+	model := hsm.Define(
+		"AttrSetResultHSM",
+		hsm.Attribute("count", 1),
+		hsm.Attribute("dynamic"),
+		hsm.State("idle",
+			hsm.Transition(
+				hsm.OnSet("count"),
+				hsm.Target("../changed"),
+				hsm.Effect(func(ctx context.Context, sm *AttrHSM, event hsm.Event) {
+					if change, ok := event.Data.(hsm.AttributeChange); ok {
+						changeCh <- change
+					}
+				}),
+			),
+		),
+		hsm.State("changed"),
+		hsm.Initial(hsm.Target("idle")),
+	)
+	sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
+
+	assertWaiterClosed(t, "unknown attribute set", hsm.Set(context.Background(), sm, "missing", 2))
+	if _, ok := hsm.Get(context.Background(), sm, "missing"); ok {
+		t.Fatal("unknown attribute set created runtime storage")
+	}
+
+	assertWaiterClosed(t, "wrong typed attribute set", hsm.Set(context.Background(), sm, "count", "wrong"))
+	if value, ok := hsm.Get(context.Background(), sm, "count"); !ok || value.(int) != 1 {
+		t.Fatal("type-mismatched attribute set changed value", "value", value, "ok", ok)
+	}
+	if sm.State() != "/AttrSetResultHSM/idle" {
+		t.Fatal("type-mismatched attribute set emitted OnSet", "state", sm.State())
+	}
+	select {
+	case change := <-changeCh:
+		t.Fatal("unexpected attribute change for rejected Set", "change", change)
+	default:
+	}
+
+	awaitWaiter(t, "untyped attribute first set", hsm.Set(context.Background(), sm, "dynamic", "first"))
+	if value, ok := hsm.Get(context.Background(), sm, "dynamic"); !ok || value.(string) != "first" {
+		t.Fatal("expected untyped attribute first set to store value", "value", value, "ok", ok)
+	}
+	assertWaiterClosed(t, "runtime typed attribute mismatch", hsm.Set(context.Background(), sm, "dynamic", 3))
+	if value, ok := hsm.Get(context.Background(), sm, "dynamic"); !ok || value.(string) != "first" {
+		t.Fatal("runtime type-mismatched attribute set changed value", "value", value, "ok", ok)
+	}
+}
+
 func TestOnSetImplicitAttribute(t *testing.T) {
 	changeCh := make(chan hsm.AttributeChange, 1)
 	model := hsm.Define(
