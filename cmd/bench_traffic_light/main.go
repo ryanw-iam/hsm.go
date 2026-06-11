@@ -147,6 +147,51 @@ func envInt(name string, defaultValue int) int {
 	return parsed
 }
 
+func envBool(name string) bool {
+	value, ok := os.LookupEnv(name)
+	if !ok {
+		return false
+	}
+	return value != "" && value != "0" && value != "false" && value != "False"
+}
+
+func assertTrafficLight(sm *TrafficLight, state string, carsWaiting int, timer int, step string) {
+	if sm.State() != state {
+		panic(fmt.Sprintf("%s: state %q, expected %q", step, sm.State(), state))
+	}
+	if sm.carsWaiting != carsWaiting {
+		panic(fmt.Sprintf("%s: carsWaiting %d, expected %d", step, sm.carsWaiting, carsWaiting))
+	}
+	if sm.timer != timer {
+		panic(fmt.Sprintf("%s: timer %d, expected %d", step, sm.timer, timer))
+	}
+}
+
+func validateTrafficLight(ctx context.Context) {
+	light := &TrafficLight{}
+	sm := hsm.Started(ctx, light, &model)
+	if sm == nil {
+		panic("validation HSM not started")
+	}
+	assertTrafficLight(sm, "/TrafficLight/operational/red", 0, 0, "initial")
+
+	completion := hsm.Dispatch(ctx, sm, CarArrival)
+	if completion == nil {
+		panic("dispatch did not return a blockable completion")
+	}
+	<-completion
+	assertTrafficLight(sm, "/TrafficLight/operational/red", 1, 0, "after CarArrival")
+
+	<-hsm.Dispatch(ctx, sm, TimerEvent)
+	assertTrafficLight(sm, "/TrafficLight/operational/green", 1, 40, "after first TimerEvent")
+
+	<-hsm.Dispatch(ctx, sm, TimerEvent)
+	assertTrafficLight(sm, "/TrafficLight/operational/yellow", 1, 40, "after second TimerEvent")
+
+	<-hsm.Dispatch(ctx, sm, TimerEvent)
+	assertTrafficLight(sm, "/TrafficLight/operational/red", 1, 40, "after third TimerEvent")
+}
+
 func dispatchBatch(ctx context.Context, sm *TrafficLight, cycles int) {
 	for i := 0; i < cycles; i++ {
 		<-hsm.Dispatch(ctx, sm, CarArrival)
@@ -173,6 +218,9 @@ func main() {
 	warmupMs := envInt("HSM_BENCH_WARMUP_MS", 250)
 	durationMs := envInt("HSM_BENCH_DURATION_MS", 2000)
 	ctx := context.Background()
+	if envBool("HSM_BENCH_VALIDATE") {
+		validateTrafficLight(ctx)
+	}
 
 	lightWarmup := &TrafficLight{}
 	mWarmup := hsm.Started(ctx, lightWarmup, &model)
