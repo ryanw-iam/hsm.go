@@ -8,7 +8,7 @@ Package hsm provides a powerful hierarchical state machine (HSM) implementation 
 
 It enables modeling complex state-driven systems with features like hierarchical states,
 entry/exit actions, guard conditions, and event-driven transitions. The implementation
-follows the Unified DSK (Domain Specific Kit) specification, ensuring consistency across
+follows the Stateforward HSM DSL/runtime contract, ensuring consistency across
 platforms.
 
 # Features
@@ -29,68 +29,40 @@ Define your state machine structure and behavior using the declarative builder p
 
 	model := hsm.Define(
 	    "example",
+	    hsm.Initial(hsm.Target("foo")),
 	    hsm.State("foo"),
 	    hsm.State("bar"),
 	    hsm.Transition(
-	        hsm.Trigger("moveToBar"),
+	        hsm.On("moveToBar"),
 	        hsm.Source("foo"),
 	        hsm.Target("bar"),
 	    ),
-	    hsm.Initial("foo"),
 	)
 
 	// Start the state machine
-	sm := hsm.Start(context.Background(), &MyHSM{}, &model)
-	sm.Dispatch(hsm.Event{Name: "moveToBar"})
+	sm := hsm.Started(context.Background(), &MyHSM{}, &model)
+	<-hsm.Dispatch(context.Background(), sm, hsm.Event{Name: "moveToBar"})
 
 # Synchronization
 
-Wait on the completion channel returned by `Dispatch`, `Set`, `Restart`,
+Wait on the `Completion` returned by `Dispatch`, `Set`, `Restart`,
 `Stop`, `DispatchAll`, or `DispatchTo` before asserting on post-transition
-state. That completion channel is the supported production synchronization
-path.
+state. The completion remains receive-compatible as `<-chan struct{}` and also
+supports `Wait` and `Err` for direct-call failures.
+
+Direct dispatch to a nil, unstarted, or stopped instance returns a failed
+completion. Fan-out dispatch filters inactive recipients.
 
 Use `AfterProcess`, `AfterDispatch`, `AfterEntry`, `AfterExit`, and
 `AfterExecuted` for tests and deterministic observation only.
 
-- `ErrNilHSM, ErrInvalidState, ErrMissingHSM, ErrMissingOperation, ErrInvalidOperation` — Error variables for common HSM error conditions.
-- `InitialEvent, ErrorEvent, AnyEvent, FinalEvent, InfiniteDuration` — Built-in event types and special duration constants used by the HSM runtime.
-- `Keys`
-- `NullKind, ElementKind, NamespaceKind, VertexKind, ConstraintKind, BehaviorKind, ConcurrentKind, StateMachineKind, StateKind, RegionKind, TransitionKind, InternalKind, ExternalKind, LocalKind, SelfKind, EventKind, TimeEventKind, CompletionEventKind, ChangeEventKind, CallEventKind, ErrorEventKind, PseudostateKind, InitialKind, FinalStateKind, ChoiceKind, ShallowHistoryKind, DeepHistoryKind, CustomKind` — Kind constants define the HSM type hierarchy using bit-packed inheritance.
-- `Version` — Version is the current semantic version of the hsm package.
-- `func AfterDispatch(ctx context.Context, hsm Instance, event Event) <-chan struct{}` — AfterDispatch is for tests and deterministic observation only; it closes when the specified event is dispatched, not when processing completes.
-- `func AfterEntry(ctx context.Context, hsm Instance, state string) <-chan struct{}` — AfterEntry is for tests and deterministic observation only; it closes when the specified state is entered.
-- `func AfterExecuted(ctx context.Context, hsm Instance, state string) <-chan struct{}` — AfterExecuted is for tests and deterministic observation only; it closes when the specified state's do-activity has completed execution.
-- `func AfterExit(ctx context.Context, hsm Instance, state string) <-chan struct{}` — AfterExit is for tests and deterministic observation only; it closes when the specified state is exited.
-- `func AfterProcess(ctx context.Context, hsm Instance, maybeEvent ...Event) <-chan struct{}` — AfterProcess is for tests and deterministic observation only; production callers should wait on the supported completion channel path instead.
-- `func Call(ctx context.Context, hsm Instance, name string, args ...any) (any, error)` — Call dispatches an OnCall event and invokes the named operation.
-- `func DispatchAll(ctx context.Context, event Event) <-chan struct{}` — DispatchAll returns a completion channel for all selected instances and is part of the supported production synchronization path.
-- `func DispatchTo(ctx context.Context, event Event, maybeIds ...string) <-chan struct{}` — DispatchTo returns a completion channel for all matching instances and is part of the supported production synchronization path.
-- `func Dispatch[T context.Context](ctx T, hsm Instance, event Event) <-chan struct{}` — Dispatch returns a completion channel for a specific state machine instance and is part of the supported production synchronization path.
-- `func Get(ctx context.Context, hsm Instance, name string) (any, bool)` — Get reads an attribute value from the given state machine or from context.
-- `func ID(hsm Instance) string` — ID returns the unique identifier of a state machine instance.
-- `func IsAncestor(current, target string) bool` — IsAncestor checks whether current is an ancestor of target in the state hierarchy.
-- `func LCA(a, b string) string` — LCA finds the Lowest Common Ancestor between two qualified state names in a hierarchical state machine.
-- `func Match(value string, patterns ...string) bool` — Match provides a simple interface, handling basic cases directly and delegating complex matching to the match function.
-- `func Name(hsm Instance) string` — Name returns the simple name of a state machine instance (without path prefix).
-- `func New[T Instance](sm T, model *Model, maybeConfig ...Config) T`
-- `func QualifiedName(hsm Instance) string` — QualifiedName returns the fully qualified name of a state machine instance.
-- `func Restart(ctx context.Context, hsm Instance, maybeData ...any) <-chan struct{}` — Restart returns a completion channel and is part of the supported production synchronization path.
-- `func Set(ctx context.Context, hsm Instance, name string, value any) <-chan struct{}` — Set returns a completion channel and is part of the supported production synchronization path.
-- `func Start[T Instance](ctx context.Context, sm T, maybeData ...any) T`
-- `func Started[T Instance](ctx context.Context, sm T, model *Model, maybeConfig ...Config) T` — Started creates and starts a new state machine instance with the given model and configuration.
-- `func Stop(ctx context.Context, hsm Instance) <-chan struct{}` — Stop returns a completion channel and is part of the supported production synchronization path; if no machine is available it returns an already-closed completion channel.
-- `type AttributeChange` — AttributeChange is the payload for attribute change events.
-- `type CallData` — CallData is the payload for call events.
-- `type Config` — Config provides configuration options for state machine initialization.
-- `type Element`
-- `type EventDetail`
-- `type Event`
-- `type Expression` — Expression is a function type that evaluates a condition on a state machine.
-- `type HSM`
-- `type Instance` — Instance represents an active state machine instance that can process events and track state.
-- `type Model` — Model represents the complete state machine model definition.
-- `type Operation` — Operation is a function type that performs an action on a state machine.
-- `type Queue` — Queue provides injectable buffering for regular events while completion events remain runtime-prioritized.
-- `type RedefinableElement` — RedefinableElement is a function type that modifies a Model by adding or updating elements.
-- `type Snapshot`
+<!-- selected public API entries from package hsm -->
+
+- Model construction: `Define`, `Redefine`, `InlineModel`, `State`, `SubmachineState`, `Initial`, `Transition`, `TransitionType`, `Source`, `Target`, `Choice`, `EntryPoint`, `ExitPoint`, `ShallowHistory`, `DeepHistory`, `Final`.
+- Behavior and triggers: `Entry`, `Activity`, `Exit`, `Effect`, `Guard`, `On`, `OnSet`, `OnCall`, `After`, `At`, `Every`, `When`, `Defer`, `Attribute`, `Operation`.
+- Model hooks: `Validator`, `Finalizer`, and `Observe`; custom hooks use `ModelValidator`, `ModelValidatorFunc`, `DefaultModelValidator`, `ModelFinalizer`, `ModelFinalizerFunc`, and `DefaultModelFinalizer`.
+- Runtime lifecycle: `New`, `Started`, `Start`, `Stop`, `Restart`, `Dispatch`, `DispatchAll`, `DispatchTo`, `Set`, `Get`, `Call`, `TakeSnapshot`, `TakeSnapshots`; `TakeSnapshot(ctx, group)` returns ordered `[]Snapshot`.
+- Groups and identity: `NewGroup`, `MakeGroup`, `Group.Instances`, `Group.States`, `Group.Snapshots`, `ID`, `QualifiedName`, `Name`, `FromContext`, `InstancesFromContext`; group snapshots preserve flattened member order.
+- Deterministic test observation: `AfterProcess`, `AfterDispatch`, `AfterEntry`, `AfterExit`, and `AfterExecuted`.
+- Core types: `Model`, `FinalizedModel`, `Config`, `Event`, `Completion`, `ObservationData`, `AttributeChange`, `CallData`, `Snapshot`, `TransitionSnapshot`, `EventSnapshot`, `Queue`, `Group`, `HSM`, `Instance`, `Element`, `RedefinableElement`, `OperationFunc`, and `ExpressionFunc`.
+- Built-ins: `InitialEvent`, `ErrorEvent`, `AnyEvent`, `FinalEvent`, `ObservationEvent`, `InfiniteDuration`, `Keys`, `Version`, exported `*Kind` constants, and exported error sentinels including `ErrMissingHSM`, `ErrInvalidState`, `ErrUnknownAttribute`, and `ErrInvalidAttributeType`.

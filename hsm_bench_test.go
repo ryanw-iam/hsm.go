@@ -65,7 +65,7 @@ func effectBehavior(_ context.Context, b *BenchHSM, _ hsm.Event) {
 // }
 
 // runHSMBenchmark is a helper to run a specific HSM benchmark scenario.
-func runHSMBenchmark(b *testing.B, modelHsm hsm.Model, event1, event2 hsm.Event) {
+func runHSMBenchmark(b *testing.B, modelHsm hsm.FinalizedModel, event1, event2 hsm.Event) {
 	ctx := context.Background()
 	instance := &BenchHSM{}
 

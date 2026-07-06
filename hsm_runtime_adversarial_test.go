@@ -11,9 +11,9 @@ import (
 )
 
 func TestRuntimeAdversarial(t *testing.T) {
-	t.Run("custom_queue_push_error_dispatches_error_event", func(t *testing.T) {
+	t.Run("custom_queue_push_error_dispatches_error_event_without_reentering_queue", func(t *testing.T) {
 		queueErr := errors.New("queue push failed")
-		recorder := newErrorEventRecorder()
+		pushes := 0
 		model := hsm.Define(
 			"QueuePushErrorHSM",
 			hsm.Initial(hsm.Target("idle")),
@@ -23,11 +23,11 @@ func TestRuntimeAdversarial(t *testing.T) {
 				hsm.On(hsm.ErrorEvent),
 				hsm.Source("idle"),
 				hsm.Target("failed"),
-				hsm.Effect(recorder.effect),
 			),
 		)
 		queue := hsm.Queue{
 			Push: func(context.Context, hsm.Event) error {
+				pushes++
 				return queueErr
 			},
 			Pop: func(context.Context) (hsm.Event, bool, error) {
@@ -39,15 +39,45 @@ func TestRuntimeAdversarial(t *testing.T) {
 		}
 
 		sm := hsm.Started(context.Background(), &THSM{}, &model, hsm.Config{Queue: queue})
-		errorProcessed := hsm.AfterProcess(sm.Context(), sm, hsm.ErrorEvent)
-		failedEntered := hsm.AfterEntry(sm.Context(), sm, "/QueuePushErrorHSM/failed")
-
 		awaitWaiter(t, "queue push failure dispatch", hsm.Dispatch(sm.Context(), sm, hsm.Event{Name: "go"}))
-		awaitWaiter(t, "queue push error processing", errorProcessed)
-		awaitWaiter(t, "queue push error failed entry", failedEntered)
 
-		if err := recorder.await(t, "queue push failure"); !errors.Is(err, queueErr) {
-			t.Fatalf("expected queue push error %v, got %v", queueErr, err)
+		if pushes != 1 {
+			t.Fatalf("expected one failed push, got %d", pushes)
+		}
+		if sm.State() != "/QueuePushErrorHSM/failed" {
+			t.Fatalf("expected failed after queue push failure, got %s", sm.State())
+		}
+	})
+
+	t.Run("snapshot_len_error_does_not_mutate_queue", func(t *testing.T) {
+		queueErr := errors.New("queue len failed")
+		pushes := 0
+		model := hsm.Define(
+			"SnapshotQueueLenErrorHSM",
+			hsm.Initial(hsm.Target("idle")),
+			hsm.State("idle"),
+		)
+		queue := hsm.Queue{
+			Push: func(context.Context, hsm.Event) error {
+				pushes++
+				return nil
+			},
+			Pop: func(context.Context) (hsm.Event, bool, error) {
+				return hsm.Event{}, false, nil
+			},
+			Len: func(context.Context) (int, error) {
+				return 0, queueErr
+			},
+		}
+
+		sm := hsm.Started(context.Background(), &THSM{}, &model, hsm.Config{Queue: queue})
+		snapshot := hsm.TakeSnapshot(context.Background(), sm)
+
+		if snapshot.QueueLen != 0 {
+			t.Fatalf("snapshot QueueLen = %d, want 0 after Len error", snapshot.QueueLen)
+		}
+		if pushes != 0 {
+			t.Fatalf("snapshot pushed %d events after Len error", pushes)
 		}
 	})
 
@@ -99,6 +129,47 @@ func TestRuntimeAdversarial(t *testing.T) {
 		awaitWaiter(t, "concurrent panic stop", hsm.Stop(context.Background(), sm))
 	})
 
+	t.Run("synchronous_behavior_panic_error_event_drains_before_dispatch_completion", func(t *testing.T) {
+		recorder := newErrorEventRecorder()
+		boomEvent := hsm.Event{Name: "boom"}
+
+		model := hsm.Define(
+			"SynchronousBehaviorPanicAdversarialHSM",
+			hsm.Initial(hsm.Target("idle")),
+			hsm.State("idle",
+				hsm.Transition(
+					hsm.On(boomEvent),
+					hsm.Target("../unreachable"),
+					hsm.Effect(func(ctx context.Context, sm *THSM, event hsm.Event) {
+						panic("sync boom")
+					}),
+				),
+			),
+			hsm.State("failed"),
+			hsm.State("unreachable"),
+			hsm.Transition(
+				hsm.On(hsm.ErrorEvent),
+				hsm.Source("idle"),
+				hsm.Target("failed"),
+				hsm.Effect(recorder.effect),
+			),
+		)
+
+		sm := hsm.Started(context.Background(), &THSM{}, &model)
+		awaitWaiter(t, "synchronous panic dispatch", hsm.Dispatch(sm.Context(), sm, boomEvent))
+
+		err := recorder.await(t, "synchronous behavior panic")
+		if !strings.Contains(err.Error(), "panic in behavior /SynchronousBehaviorPanicAdversarialHSM/idle/") {
+			t.Fatalf("expected synchronous panic error path, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "sync boom") {
+			t.Fatalf("expected synchronous panic message, got %v", err)
+		}
+		if sm.State() != "/SynchronousBehaviorPanicAdversarialHSM/failed" {
+			t.Fatalf("expected failed state after synchronous panic, got %s", sm.State())
+		}
+	})
+
 	t.Run("processing_panic_dispatches_error_event_and_machine_remains_live", func(t *testing.T) {
 		recorder := newErrorEventRecorder()
 		boomEvent := hsm.Event{Name: "boom"}
@@ -141,7 +212,7 @@ func TestRuntimeAdversarial(t *testing.T) {
 		awaitWaiter(t, "processing panic failed entry", failedEntered)
 
 		err := recorder.await(t, "processing panic")
-		if !strings.Contains(err.Error(), "panic while processing event in state machine: processing boom") {
+		if !strings.Contains(err.Error(), "panic in guard /ProcessingPanicAdversarialHSM/idle/") {
 			t.Fatalf("expected processing panic error, got %v", err)
 		}
 		if sm.State() != "/ProcessingPanicAdversarialHSM/failed" {
@@ -154,6 +225,35 @@ func TestRuntimeAdversarial(t *testing.T) {
 
 		if sm.State() != "/ProcessingPanicAdversarialHSM/recovered" {
 			t.Fatalf("expected recovered state after post-failure dispatch, got %s", sm.State())
+		}
+	})
+
+	t.Run("operation_panic_returns_error_without_oncall_dispatch", func(t *testing.T) {
+		type OperationPanicHSM struct {
+			hsm.HSM
+		}
+		model := hsm.Define(
+			"OperationPanicAdversarialHSM",
+			hsm.Operation("explode", func(context.Context, *OperationPanicHSM) any {
+				panic("operation boom")
+			}),
+			hsm.Initial(hsm.Target("idle")),
+			hsm.State("idle",
+				hsm.Transition(hsm.OnCall("explode"), hsm.Target("../called")),
+			),
+			hsm.State("called"),
+		)
+		sm := hsm.Started(context.Background(), &OperationPanicHSM{}, &model)
+
+		result, err := hsm.Call(context.Background(), sm, "explode")
+		if err == nil || !strings.Contains(err.Error(), "operation /OperationPanicAdversarialHSM/explode panic: operation boom") {
+			t.Fatalf("operation panic error = %v", err)
+		}
+		if result != nil {
+			t.Fatalf("operation panic result = %#v, want nil", result)
+		}
+		if sm.State() != "/OperationPanicAdversarialHSM/idle" {
+			t.Fatalf("operation panic dispatched OnCall, state = %s", sm.State())
 		}
 	})
 
@@ -226,8 +326,8 @@ func TestPublicHelperAdversarial(t *testing.T) {
 	hostileEvent := hsm.Event{Name: "hostile"}
 
 	t.Run("nil_instance_dispatch_and_set_close_immediately", func(t *testing.T) {
-		assertWaiterClosed(t, "dispatch with nil instance", hsm.Dispatch(context.Background(), nil, hostileEvent))
-		assertWaiterClosed(t, "set with nil instance", hsm.Set(context.Background(), nil, "hostile", 1))
+		assertCompletionErr(t, "dispatch with nil instance", hsm.Dispatch(context.Background(), nil, hostileEvent), hsm.ErrMissingHSM)
+		assertCompletionErr(t, "set with nil instance", hsm.Set(context.Background(), nil, "hostile", 1), hsm.ErrMissingHSM)
 	})
 
 	t.Run("missing_context_call_returns_missing_hsm", func(t *testing.T) {
@@ -239,10 +339,10 @@ func TestPublicHelperAdversarial(t *testing.T) {
 
 	t.Run("typed_nil_context_helpers_do_not_panic", func(t *testing.T) {
 		assertNoPanic(t, "dispatch with typed nil context", func() {
-			assertWaiterClosed(t, "dispatch with typed nil context", hsm.Dispatch(nilCtx, nil, hostileEvent))
+			assertCompletionErr(t, "dispatch with typed nil context", hsm.Dispatch(nilCtx, nil, hostileEvent), hsm.ErrMissingHSM)
 		})
 		assertNoPanic(t, "set with typed nil context", func() {
-			assertWaiterClosed(t, "set with typed nil context", hsm.Set(nilCtx, nil, "hostile", 1))
+			assertCompletionErr(t, "set with typed nil context", hsm.Set(nilCtx, nil, "hostile", 1), hsm.ErrMissingHSM)
 		})
 		assertNoPanic(t, "dispatch all with typed nil context", func() {
 			assertWaiterClosed(t, "dispatch all with typed nil context", hsm.DispatchAll(nilCtx, hostileEvent))

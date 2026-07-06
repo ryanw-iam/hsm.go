@@ -766,12 +766,12 @@ func TestSetRejectsUnknownAndExactTypeMismatch(t *testing.T) {
 	)
 	sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
 
-	assertWaiterClosed(t, "unknown attribute set", hsm.Set(context.Background(), sm, "missing", 2))
+	assertCompletionErr(t, "unknown attribute set", hsm.Set(context.Background(), sm, "missing", 2), hsm.ErrUnknownAttribute)
 	if _, ok := hsm.Get(context.Background(), sm, "missing"); ok {
 		t.Fatal("unknown attribute set created runtime storage")
 	}
 
-	assertWaiterClosed(t, "wrong typed attribute set", hsm.Set(context.Background(), sm, "count", "wrong"))
+	assertCompletionErr(t, "wrong typed attribute set", hsm.Set(context.Background(), sm, "count", "wrong"), hsm.ErrInvalidAttributeType)
 	if value, ok := hsm.Get(context.Background(), sm, "count"); !ok || value.(int) != 1 {
 		t.Fatal("type-mismatched attribute set changed value", "value", value, "ok", ok)
 	}
@@ -788,7 +788,7 @@ func TestSetRejectsUnknownAndExactTypeMismatch(t *testing.T) {
 	if value, ok := hsm.Get(context.Background(), sm, "dynamic"); !ok || value.(string) != "first" {
 		t.Fatal("expected untyped attribute first set to store value", "value", value, "ok", ok)
 	}
-	assertWaiterClosed(t, "runtime typed attribute mismatch", hsm.Set(context.Background(), sm, "dynamic", 3))
+	assertCompletionErr(t, "runtime typed attribute mismatch", hsm.Set(context.Background(), sm, "dynamic", 3), hsm.ErrInvalidAttributeType)
 	if value, ok := hsm.Get(context.Background(), sm, "dynamic"); !ok || value.(string) != "first" {
 		t.Fatal("runtime type-mismatched attribute set changed value", "value", value, "ok", ok)
 	}
@@ -847,17 +847,13 @@ func TestAttributeValidation(t *testing.T) {
 			hsm.Initial(hsm.Target("s")),
 		)
 	})
-	assertNoPanic(t, "attribute name with slash", func() {
-		model := hsm.Define(
+	assertPanic(t, "attribute name with slash", func() {
+		hsm.Define(
 			"AttrSlash",
 			hsm.Attribute("bad/name", 7),
 			hsm.State("s"),
 			hsm.Initial(hsm.Target("s")),
 		)
-		sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
-		if value, ok := hsm.Get(context.Background(), sm, "bad/name"); !ok || value.(int) != 7 {
-			t.Fatal("expected qualified attribute default", "value", value, "ok", ok)
-		}
 	})
 	assertPanic(t, "duplicate attribute", func() {
 		hsm.Define(
@@ -866,6 +862,22 @@ func TestAttributeValidation(t *testing.T) {
 			hsm.Attribute("dup"),
 			hsm.State("s"),
 			hsm.Initial(hsm.Target("s")),
+		)
+	})
+	assertPanic(t, "attribute default type mismatch", func() {
+		hsm.Define(
+			"BadAttrDefaultType",
+			hsm.Attribute("count", hsm.AttributeType[int](), "bad"),
+			hsm.State("s"),
+			hsm.Initial(hsm.Target("s")),
+		)
+	})
+	assertPanic(t, "attribute conflicts with state", func() {
+		hsm.Define(
+			"BadAttrStateConflict",
+			hsm.State("dup"),
+			hsm.Attribute("dup"),
+			hsm.Initial(hsm.Target("dup")),
 		)
 	})
 	assertPanic(t, "OnSet outside Transition", func() {
@@ -883,19 +895,54 @@ func TestAttributeValidation(t *testing.T) {
 			hsm.Initial(hsm.Target("s")),
 		)
 	})
-	assertNoPanic(t, "OnSet name with slash", func() {
-		model := hsm.Define(
+	assertPanic(t, "OnSet name with slash", func() {
+		hsm.Define(
 			"OnSetSlash",
 			hsm.State("s", hsm.Transition(hsm.OnSet("bad/name"), hsm.Target("../t"))),
 			hsm.State("t"),
 			hsm.Initial(hsm.Target("s")),
 		)
-		sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
-		<-hsm.Set(context.Background(), sm, "bad/name", 1)
-		if sm.State() != "/OnSetSlash/t" {
-			t.Fatal("state did not transition on slashed attribute", "state", sm.State())
-		}
 	})
+	assertPanic(t, "OnSet conflicts with operation", func() {
+		hsm.Define(
+			"BadOnSetOperationConflict",
+			hsm.Operation("dynamic", func() {}),
+			hsm.State("s", hsm.Transition(hsm.OnSet("dynamic"), hsm.Target("../t"))),
+			hsm.State("t"),
+			hsm.Initial(hsm.Target("s")),
+		)
+	})
+}
+
+func TestAttributeExplicitTypeControlsDynamicValue(t *testing.T) {
+	model := hsm.Define(
+		"AttrExplicitTypeHSM",
+		hsm.Attribute("dynamic", hsm.AttributeType[int]()),
+		hsm.State("idle",
+			hsm.Transition(
+				hsm.OnSet("dynamic"),
+				hsm.Target("../changed"),
+			),
+		),
+		hsm.State("changed"),
+		hsm.Initial(hsm.Target("idle")),
+	)
+
+	sm := hsm.Started(context.Background(), &THSM{}, &model)
+	awaitWaiter(t, "bad typed attribute set", hsm.Set(context.Background(), sm, "dynamic", "bad"))
+	if _, ok := hsm.Get(context.Background(), sm, "dynamic"); ok {
+		t.Fatal("invalid typed attribute write should not store a value")
+	}
+	if sm.State() != "/AttrExplicitTypeHSM/idle" {
+		t.Fatal("invalid typed attribute write should not transition", "state", sm.State())
+	}
+	awaitWaiter(t, "valid typed attribute set", hsm.Set(context.Background(), sm, "dynamic", 42))
+	if got, ok := hsm.Get(context.Background(), sm, "dynamic"); !ok || got != 42 {
+		t.Fatal("typed attribute value mismatch", "value", got, "ok", ok)
+	}
+	if sm.State() != "/AttrExplicitTypeHSM/changed" {
+		t.Fatal("valid typed attribute write should transition", "state", sm.State())
+	}
 }
 
 func TestCallOperationAndOnCallTransition(t *testing.T) {
@@ -933,14 +980,8 @@ func TestCallOperationAndOnCallTransition(t *testing.T) {
 	if result != "1:two" {
 		t.Fatal("call result mismatch", "result", result)
 	}
-	deadline := time.After(time.Second)
-	for sm.State() != "/CallHSM/called" {
-		select {
-		case <-deadline:
-			t.Fatal("state did not transition on OnCall", "state", sm.State())
-		default:
-			time.Sleep(time.Millisecond)
-		}
+	if sm.State() != "/CallHSM/called" {
+		t.Fatal("call returned before OnCall transition completed", "state", sm.State())
 	}
 	var data hsm.CallData
 	select {
@@ -1083,23 +1124,27 @@ func TestCallValidation(t *testing.T) {
 			hsm.Initial(hsm.Target("s")),
 		)
 	})
-	assertNoPanic(t, "operation name with slash", func() {
-		model := hsm.Define(
+	assertPanic(t, "operation name with slash", func() {
+		hsm.Define(
 			"OpSlash",
 			hsm.Operation("bad/name", func() string { return "ok" }),
 			hsm.State("s"),
 			hsm.Initial(hsm.Target("s")),
 		)
-		sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
-		result, err := hsm.Call(context.Background(), sm, "bad/name")
-		if err != nil || result != "ok" {
-			t.Fatal("expected slashed operation call to succeed", "result", result, "err", err)
-		}
 	})
 	assertPanic(t, "operation duplicate", func() {
 		hsm.Define(
 			"BadOpDup",
 			hsm.Operation("dup", func() {}),
+			hsm.Operation("dup", func() {}),
+			hsm.State("s"),
+			hsm.Initial(hsm.Target("s")),
+		)
+	})
+	assertPanic(t, "operation conflicts with attribute", func() {
+		hsm.Define(
+			"BadOpAttrConflict",
+			hsm.Attribute("dup"),
 			hsm.Operation("dup", func() {}),
 			hsm.State("s"),
 			hsm.Initial(hsm.Target("s")),
@@ -1131,28 +1176,14 @@ func TestCallValidation(t *testing.T) {
 			hsm.Initial(hsm.Target("s")),
 		)
 	})
-	assertNoPanic(t, "OnCall name with slash", func() {
-		model := hsm.Define(
+	assertPanic(t, "OnCall name with slash", func() {
+		hsm.Define(
 			"OnCallSlash",
 			hsm.Operation("bad/name", func() {}),
 			hsm.State("s", hsm.Transition(hsm.OnCall("bad/name"), hsm.Target("../t"))),
 			hsm.State("t"),
 			hsm.Initial(hsm.Target("s")),
 		)
-		sm := hsm.Started(context.Background(), &AttrHSM{}, &model)
-		_, err := hsm.Call(context.Background(), sm, "bad/name")
-		if err != nil {
-			t.Fatal("expected slashed OnCall to succeed", "err", err)
-		}
-		deadline := time.After(time.Second)
-		for sm.State() != "/OnCallSlash/t" {
-			select {
-			case <-deadline:
-				t.Fatal("state did not transition on slashed OnCall", "state", sm.State())
-			default:
-				time.Sleep(time.Millisecond)
-			}
-		}
 	})
 	assertPanic(t, "OnCall missing operation", func() {
 		hsm.Define(
@@ -1178,8 +1209,8 @@ func TestHistoryRestoresShallowAndDeep(t *testing.T) {
 				hsm.Initial(hsm.Target("A1a")),
 			),
 			hsm.State("A2"),
-			hsm.ShallowHistory("shallow"),
-			hsm.DeepHistory("deep"),
+			hsm.ShallowHistory("shallow", hsm.Transition(hsm.Target("A1"))),
+			hsm.DeepHistory("deep", hsm.Transition(hsm.Target("A1"))),
 			hsm.Initial(hsm.Target("A1")),
 		),
 		hsm.State("B"),
@@ -1222,7 +1253,7 @@ func TestHistoryFallbackDefaultAndInitial(t *testing.T) {
 			hsm.State("A2"),
 			hsm.Initial(hsm.Target("A1")),
 			hsm.ShallowHistory("shallow", hsm.Transition(hsm.Target("A2"))),
-			hsm.DeepHistory("deep"),
+			hsm.DeepHistory("deep", hsm.Transition(hsm.Target("A1"))),
 		),
 		hsm.State("B"),
 		hsm.Transition(hsm.On(toShallow), hsm.Source("B"), hsm.Target("A/shallow")),
@@ -1348,7 +1379,6 @@ func TestCompletionEvent(t *testing.T) {
 							}),
 						),
 						hsm.Transition(
-							hsm.On(dEvent),
 							hsm.Target("../d"),
 						),
 					),

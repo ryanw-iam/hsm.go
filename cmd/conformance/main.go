@@ -18,7 +18,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unsafe"
 
 	"github.com/stateforward/hsm.go"
 )
@@ -50,11 +49,13 @@ type logicalClock struct {
 	mutex         sync.Mutex
 	now           time.Duration
 	registrations []*clockRegistration
+	timerName     func() string
 }
 
 type clockRegistration struct {
 	due   time.Duration
 	timer *time.Timer
+	name  string
 }
 
 type result struct {
@@ -94,6 +95,7 @@ type dynamicAnyValue struct {
 type deferredEvent struct {
 	instanceID string
 	eventName  string
+	owner      string
 }
 
 type queueFanoutGate struct {
@@ -130,6 +132,12 @@ type timerIndexBuilder struct {
 	members map[string]bool
 }
 
+type submachineTransitionBuckets struct {
+	prepended  map[string][]anyMap
+	postpended map[string][]anyMap
+	root       []anyMap
+}
+
 type behaviorScopeKey struct{}
 type behaviorStateKey struct{}
 type activityStartedKey struct{}
@@ -160,7 +168,8 @@ func (r *activityCancelRecorder) isCancelled(behaviorID string) bool {
 
 type runner struct {
 	caseData           conformanceCase
-	models             map[string]*hsm.Model
+	models             map[string]*hsm.FinalizedModel
+	rawModelIRs        map[string]anyMap
 	modelIRs           map[string]anyMap
 	attrs              map[string][]string
 	scopedAttrs        map[string][]string
@@ -199,6 +208,7 @@ type runner struct {
 	pendingTimerScheduled int
 	pendingTimerKinds     []string
 	pendingTimerKindsByG  map[uint64][]string
+	pendingTimerNamesByG  map[uint64][]string
 	stableLabel           string
 	lastError             *conformanceError
 	callErrorBaselines    []*conformanceError
@@ -341,9 +351,10 @@ func runnerContextTimeout() time.Duration {
 }
 
 func newRunner(c conformanceCase) *runner {
-	return &runner{
+	r := &runner{
 		caseData:              c,
-		models:                map[string]*hsm.Model{},
+		models:                map[string]*hsm.FinalizedModel{},
+		rawModelIRs:           map[string]anyMap{},
 		modelIRs:              map[string]anyMap{},
 		attrs:                 map[string][]string{},
 		scopedAttrs:           map[string][]string{},
@@ -360,6 +371,7 @@ func newRunner(c conformanceCase) *runner {
 		timerEventsByOwner:    map[string][]timerEventDef{},
 		timerNameCache:        map[string]string{},
 		pendingTimerKindsByG:  map[uint64][]string{},
+		pendingTimerNamesByG:  map[uint64][]string{},
 		instances:             map[string]*confInstance{},
 		instanceQueues:        map[string]string{},
 		started:               map[string]bool{},
@@ -370,13 +382,14 @@ func newRunner(c conformanceCase) *runner {
 		invalidInstanceModels: map[string]string{},
 		eventMemory:           map[string]hsm.Event{},
 		snapshots:             map[string]any{},
-		clock:                 newLogicalClock(),
 		cancelledActivities:   map[string]bool{},
 	}
+	r.clock = newLogicalClock(r.nextTimerName)
+	return r
 }
 
-func newLogicalClock() *logicalClock {
-	return &logicalClock{}
+func newLogicalClock(timerName func() string) *logicalClock {
+	return &logicalClock{timerName: timerName}
 }
 
 func (c *logicalClock) Clock() hsm.Clock {
@@ -396,16 +409,21 @@ func (c *logicalClock) NewTimer(duration time.Duration) *time.Timer {
 		duration = 0
 	}
 	timer := time.NewTimer(24 * time.Hour)
+	name := ""
+	if c.timerName != nil {
+		name = c.timerName()
+	}
 	c.mutex.Lock()
 	c.registrations = append(c.registrations, &clockRegistration{
 		due:   c.now + duration,
 		timer: timer,
+		name:  name,
 	})
 	c.mutex.Unlock()
 	return timer
 }
 
-func (c *logicalClock) Advance(duration time.Duration) {
+func (c *logicalClock) Advance(duration time.Duration, deliver func(string, func())) {
 	if duration < 0 {
 		duration = 0
 	}
@@ -422,11 +440,55 @@ func (c *logicalClock) Advance(duration time.Duration) {
 	}
 	c.registrations = pending
 	c.mutex.Unlock()
+	sort.SliceStable(due, func(i, j int) bool {
+		if due[i].due != due[j].due {
+			return due[i].due < due[j].due
+		}
+		return timerEventNameLess(due[i].name, due[j].name)
+	})
 	for _, registration := range due {
 		if registration.timer.Stop() {
-			registration.timer.Reset(0)
+			trigger := func() {
+				registration.timer.Reset(0)
+			}
+			if deliver != nil && registration.name != "" {
+				deliver(registration.name, trigger)
+			} else {
+				trigger()
+				for range 4 {
+					runtime.Gosched()
+				}
+			}
 		}
 	}
+}
+
+func timerEventNameLess(left, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	leftOrdinal, leftOK := timerEventTransitionOrdinal(left)
+	rightOrdinal, rightOK := timerEventTransitionOrdinal(right)
+	if leftOK && rightOK && leftOrdinal != rightOrdinal {
+		return leftOrdinal < rightOrdinal
+	}
+	return left < right
+}
+
+func timerEventTransitionOrdinal(eventName string) (int, bool) {
+	transitionName := path.Base(path.Dir(eventName))
+	if path.Base(eventName) != "duration" && path.Base(eventName) != "timepoint" {
+		transitionName = path.Base(path.Dir(path.Dir(eventName)))
+	}
+	raw, ok := strings.CutPrefix(transitionName, "transition_")
+	if !ok {
+		return 0, false
+	}
+	ordinal, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return ordinal, true
 }
 
 func (r *runner) run() (err error) {
@@ -442,14 +504,7 @@ func (r *runner) run() (err error) {
 	if r.caseData.Mode == "validation" {
 		return r.runValidation()
 	}
-	model, err := r.buildModels()
-	if err != nil {
-		return err
-	}
-	if err := r.buildInstances(model); err != nil {
-		return err
-	}
-	if err := r.buildGroups(); err != nil {
+	if _, err := r.buildRuntime(); err != nil {
 		return err
 	}
 	instances := &sync.Map{}
@@ -503,17 +558,22 @@ func (r *runner) validationBuildError() (err error) {
 	if err := r.validateForBuild(); err != nil {
 		return err
 	}
+	_, err = r.buildRuntime()
+	return err
+}
+
+func (r *runner) buildRuntime() (*hsm.FinalizedModel, error) {
 	model, err := r.buildModels()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := r.buildInstances(model); err != nil {
-		return err
+		return nil, err
 	}
 	if err := r.buildGroups(); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return model, nil
 }
 
 func validationExpectationMatches(m map[string]any, msg string) bool {
@@ -596,8 +656,17 @@ func validationCodeMatches(code, message string) bool {
 }
 
 func (r *runner) validateForBuild() error {
-	models := append([]anyMap{r.caseData.Model}, r.caseData.Models...)
-	for _, modelIR := range models {
+	modelIRs := r.validationModelIRs()
+	if err := resolveModelIRMap(modelIRs); err != nil {
+		return err
+	}
+	names := make([]string, 0, len(modelIRs))
+	for name := range modelIRs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		modelIR := modelIRs[name]
 		if err := r.validateAttributes(modelIR); err != nil {
 			return err
 		}
@@ -611,8 +680,12 @@ func (r *runner) validateForBuild() error {
 			return err
 		}
 	}
-	modelIRs := r.validationModelIRs()
-	if err := r.validateOnCallOperations(r.caseData.Model, nil, map[string]bool{}, modelIRs); err != nil {
+	mainName, _ := r.caseData.Model["name"].(string)
+	mainIR := modelIRs[mainName]
+	if mainIR == nil {
+		mainIR = r.caseData.Model
+	}
+	if err := r.validateOnCallOperations(mainIR, nil, map[string]bool{}, modelIRs); err != nil {
 		return err
 	}
 	if err := r.validateBehaviorPrograms(); err != nil {
@@ -630,11 +703,11 @@ func (r *runner) validateForBuild() error {
 func (r *runner) validationModelIRs() map[string]anyMap {
 	modelIRs := map[string]anyMap{}
 	if name, ok := r.caseData.Model["name"].(string); ok && name != "" {
-		modelIRs[name] = r.caseData.Model
+		modelIRs[name] = cloneObject(r.caseData.Model)
 	}
 	for _, modelIR := range r.caseData.Models {
 		if name, ok := modelIR["name"].(string); ok && name != "" {
-			modelIRs[name] = modelIR
+			modelIRs[name] = cloneObject(modelIR)
 		}
 	}
 	return modelIRs
@@ -688,9 +761,6 @@ func (r *runner) validateIRShape(modelIR anyMap) error {
 			}
 		}
 		if value, ok := state["defer"]; ok {
-			if arr, ok := value.([]any); ok && len(arr) == 0 {
-				return fmt.Errorf("empty_event_array")
-			}
 			for _, rawEvent := range arrayAny(value) {
 				if _, err := eventNameValue(rawEvent); err != nil {
 					return err
@@ -875,7 +945,7 @@ func (r *runner) validateTransitionPaths(modelIR anyMap) error {
 		}
 		return validateStateTarget(resolveInitialTarget(targetString, ownerPath, rootPath, rootPath))
 	}
-	validateTransitionTarget := func(raw any, ownerPath string, bareTargets bool) error {
+	validateTransitionTarget := func(raw any, ownerPath string, bareTargets bool, hasEntryPoint bool) error {
 		if raw == nil {
 			return nil
 		}
@@ -896,6 +966,9 @@ func (r *runner) validateTransitionPaths(modelIR anyMap) error {
 		targetPath := resolvePathInScope(target, ownerPath, bareTargets, rootPath, rootPath)
 		if isInternalSubmachinePath(targetPath) {
 			return fmt.Errorf("invalid_submachine_internal_target: cannot target internal state %s", targetPath)
+		}
+		if hasEntryPoint && stateKinds[targetPath] != "submachine" {
+			return fmt.Errorf("invalid_entry_point_usage: entry point can only target a SubmachineState")
 		}
 		return validateStateTarget(targetPath)
 	}
@@ -921,7 +994,8 @@ func (r *runner) validateTransitionPaths(modelIR anyMap) error {
 				}
 				return validateStateTarget(sourcePath)
 			}
-			return validateTransitionTarget(rawTarget, ownerPath, bareTargets)
+			_, hasEntryPoint := transition["entry_point"].(string)
+			return validateTransitionTarget(rawTarget, ownerPath, bareTargets, hasEntryPoint)
 		}
 		return nil
 	}
@@ -1033,24 +1107,25 @@ func (r *runner) validateTransitionPaths(modelIR anyMap) error {
 
 func (r *runner) validateBehaviorPrograms() error {
 	required := map[string]map[string]bool{
-		"trace":                    {"value": true},
-		"set_attr":                 {"name": true, "value": true},
-		"set_attr_from_event_data": {"name": true, "path": true},
-		"get_attr":                 {"name": true},
-		"return_attr":              {"name": true},
-		"return_value":             {"value": true},
-		"return_equals":            {"name": true, "value": true},
-		"event_name_equals":        {"value": true},
-		"event_data_equals":        {"path": true, "value": true},
-		"event_data_get":           {"path": true},
-		"event_metadata_set":       {"name": true, "value": true},
-		"event_metadata_get":       {"name": true},
-		"event_metadata_equals":    {"name": true, "value": true},
-		"dispatch":                 {"event": true},
-		"call":                     {"name": true},
-		"sleep":                    {"millis": true},
-		"snapshot":                 {},
-		"yield":                    {},
+		"trace":                             {"value": true},
+		"set_attr":                          {"name": true, "value": true},
+		"set_attr_from_event_data":          {"name": true, "path": true},
+		"get_attr":                          {"name": true},
+		"return_attr":                       {"name": true},
+		"return_value":                      {"value": true},
+		"return_equals":                     {"name": true, "value": true},
+		"event_name_equals":                 {"value": true},
+		"event_data_equals":                 {"path": true, "value": true},
+		"event_data_get":                    {"path": true},
+		"event_application_metadata_equals": {"name": true, "value": true},
+		"event_metadata_set":                {"name": true, "value": true},
+		"event_metadata_get":                {"name": true},
+		"event_metadata_equals":             {"name": true, "value": true},
+		"dispatch":                          {"event": true},
+		"call":                              {"name": true},
+		"sleep":                             {"millis": true},
+		"snapshot":                          {},
+		"yield":                             {},
 	}
 	allowed := map[string]map[string]bool{}
 	for kind, keys := range required {
@@ -1059,7 +1134,7 @@ func (r *runner) validateBehaviorPrograms() error {
 			allowed[kind][key] = true
 		}
 	}
-	allowed["dispatch"] = map[string]bool{"op": true, "event": true, "target": true, "group": true}
+	allowed["dispatch"] = map[string]bool{"op": true, "event": true, "target": true, "instance": true, "group": true}
 	allowed["raise"] = map[string]bool{"op": true, "event": true, "code": true, "value": true}
 	for behaviorID, program := range r.caseData.Behaviors {
 		if len(program) == 0 {
@@ -1087,8 +1162,8 @@ func (r *runner) validateBehaviorPrograms() error {
 			if !ok {
 				return fmt.Errorf("invalid_behavior_op_operand: unsupported behavior op %q", kind)
 			}
-			if kind == "dispatch" && step["target"] != nil && step["group"] != nil {
-				return fmt.Errorf("invalid_behavior_op_operand: behavior op %s[%d] dispatch cannot declare both target and group", behaviorID, index)
+			if kind == "dispatch" && boolCount(step["target"] != nil, step["instance"] != nil, step["group"] != nil) > 1 {
+				return fmt.Errorf("invalid_behavior_op_operand: behavior op %s[%d] dispatch can declare only one target selector", behaviorID, index)
 			}
 			if (kind == "dispatch" || kind == "raise") && step["event"] != nil {
 				if _, err := eventFromValue(step["event"]); err != nil {
@@ -1132,6 +1207,11 @@ func (r *runner) validateTriggerOperands(modelIR anyMap) error {
 		"at":         {"kind": true, "duration_ms": true, "time_ms": true, "attribute": true, "behavior": true},
 	}
 	validateTransition := func(transition anyMap) error {
+		if transition["target"] == nil && transition["entry_point"] == nil && len(arrayAny(transition["effects"])) == 0 {
+			if transition["on"] != nil || transition["trigger"] != nil || transition["guard"] != nil {
+				return fmt.Errorf("missing_target: transition requires target or effect")
+			}
+		}
 		if _, hasOn := transition["on"]; hasOn {
 			if _, hasTrigger := transition["trigger"]; hasTrigger {
 				return fmt.Errorf("multiple_transition_triggers")
@@ -1160,9 +1240,6 @@ func (r *runner) validateTriggerOperands(modelIR anyMap) error {
 			}
 			if hasEvent && hasEvents {
 				return fmt.Errorf("multiple_trigger_operands")
-			}
-			if arr, ok := trigger["events"].([]any); ok && len(arr) == 0 {
-				return fmt.Errorf("empty_event_array")
 			}
 			if hasEvent {
 				if _, err := eventNameValue(trigger["event"]); err != nil {
@@ -1236,34 +1313,7 @@ func (r *runner) validateTriggerOperands(modelIR anyMap) error {
 		}
 		return nil
 	}
-	var walkStates func([]any) error
-	walkStates = func(states []any) error {
-		for _, stateAny := range states {
-			state := object(stateAny)
-			if state == nil {
-				continue
-			}
-			for _, transitionAny := range arrayAny(state["transitions"]) {
-				if transition := object(transitionAny); transition != nil {
-					if err := validateTransition(transition); err != nil {
-						return err
-					}
-				}
-			}
-			if err := walkStates(arrayAny(state["states"])); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	for _, transitionAny := range arrayAny(modelIR["transitions"]) {
-		if transition := object(transitionAny); transition != nil {
-			if err := validateTransition(transition); err != nil {
-				return err
-			}
-		}
-	}
-	return walkStates(arrayAny(modelIR["states"]))
+	return walkModelTransitions(modelIR, validateTransition, nil)
 }
 
 func (r *runner) validateTimerTriggerSource(kind string, trigger anyMap, attrTypes map[string]string) error {
@@ -1305,6 +1355,44 @@ func timerBehaviorCanReturnDuration(program []op) bool {
 	return true
 }
 
+func walkModelTransitions(modelIR anyMap, visitTransition func(anyMap) error, visitState func(anyMap) error) error {
+	visitTransitions := func(transitions []any) error {
+		for _, transitionAny := range transitions {
+			if transition := object(transitionAny); transition != nil {
+				if err := visitTransition(transition); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := visitTransitions(arrayAny(modelIR["transitions"])); err != nil {
+		return err
+	}
+	var walkStates func([]any) error
+	walkStates = func(states []any) error {
+		for _, stateAny := range states {
+			state := object(stateAny)
+			if state == nil {
+				continue
+			}
+			if err := visitTransitions(arrayAny(state["transitions"])); err != nil {
+				return err
+			}
+			if visitState != nil {
+				if err := visitState(state); err != nil {
+					return err
+				}
+			}
+			if err := walkStates(arrayAny(state["states"])); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walkStates(arrayAny(modelIR["states"]))
+}
+
 func (r *runner) validateOnCallOperations(modelIR anyMap, inherited map[string]bool, seen map[string]bool, modelIRs map[string]anyMap) error {
 	modelName, _ := modelIR["name"].(string)
 	if modelName == "" || seen[modelName] {
@@ -1329,42 +1417,18 @@ func (r *runner) validateOnCallOperations(modelIR anyMap, inherited map[string]b
 		}
 		return nil
 	}
-	var walkStates func([]any) error
-	walkStates = func(states []any) error {
-		for _, stateAny := range states {
-			state := object(stateAny)
-			if state == nil {
-				continue
-			}
-			for _, transitionAny := range arrayAny(state["transitions"]) {
-				if transition := object(transitionAny); transition != nil {
-					if err := validateTransition(transition); err != nil {
-						return err
-					}
-				}
-			}
-			if kind, _ := state["kind"].(string); kind == "submachine" {
-				childName, _ := state["machine"].(string)
-				if childIR := modelIRs[childName]; childIR != nil {
-					if err := r.validateOnCallOperations(childIR, visible, seen, modelIRs); err != nil {
-						return err
-					}
-				}
-			}
-			if err := walkStates(arrayAny(state["states"])); err != nil {
-				return err
-			}
+	visitState := func(state anyMap) error {
+		if kind, _ := state["kind"].(string); kind != "submachine" {
+			return nil
 		}
-		return nil
-	}
-	for _, transitionAny := range arrayAny(modelIR["transitions"]) {
-		if transition := object(transitionAny); transition != nil {
-			if err := validateTransition(transition); err != nil {
-				return err
-			}
+		childName, _ := state["machine"].(string)
+		childIR := modelIRs[childName]
+		if childIR == nil {
+			return nil
 		}
+		return r.validateOnCallOperations(childIR, visible, seen, modelIRs)
 	}
-	return walkStates(arrayAny(modelIR["states"]))
+	return walkModelTransitions(modelIR, validateTransition, visitState)
 }
 
 func (r *runner) validateInstances() error {
@@ -1394,16 +1458,8 @@ func (r *runner) validateGroups() error {
 		}
 		instances[id] = true
 	}
-	groupIDs := map[string]bool{}
-	for _, groupIR := range r.caseData.Groups {
-		id, err := requireString(groupIR, "id")
-		if err != nil {
-			return err
-		}
-		if groupIDs[id] {
-			return fmt.Errorf("duplicate_group: %q", id)
-		}
-		groupIDs[id] = true
+	if err := r.requireUniqueGroupIDs(); err != nil {
+		return err
 	}
 	for _, groupIR := range r.caseData.Groups {
 		membersValue, ok := groupIR["members"].([]any)
@@ -1441,7 +1497,7 @@ func boolCount(values ...bool) int {
 	return count
 }
 
-func (r *runner) buildModels() (*hsm.Model, error) {
+func (r *runner) buildModels() (*hsm.FinalizedModel, error) {
 	mainName, err := requireString(r.caseData.Model, "name")
 	if err != nil {
 		return nil, err
@@ -1449,7 +1505,8 @@ func (r *runner) buildModels() (*hsm.Model, error) {
 	if strings.Contains(mainName, "/") {
 		return nil, fmt.Errorf("invalid_name: model name %q", mainName)
 	}
-	r.modelIRs[mainName] = r.caseData.Model
+	r.rawModelIRs[mainName] = cloneObject(r.caseData.Model)
+	r.modelIRs[mainName] = cloneObject(r.caseData.Model)
 	for _, modelIR := range r.caseData.Models {
 		name, err := requireString(modelIR, "name")
 		if err != nil {
@@ -1458,10 +1515,14 @@ func (r *runner) buildModels() (*hsm.Model, error) {
 		if strings.Contains(name, "/") {
 			return nil, fmt.Errorf("invalid_name: model name %q", name)
 		}
-		if _, exists := r.modelIRs[name]; exists {
+		if _, exists := r.rawModelIRs[name]; exists {
 			return nil, fmt.Errorf("duplicate_model: %q", name)
 		}
-		r.modelIRs[name] = modelIR
+		r.rawModelIRs[name] = cloneObject(modelIR)
+		r.modelIRs[name] = cloneObject(modelIR)
+	}
+	if err := r.resolveModelIRs(); err != nil {
+		return nil, err
 	}
 	for _, modelIR := range r.modelIRs {
 		for _, refAny := range object(modelIR["operations"]) {
@@ -1470,19 +1531,44 @@ func (r *runner) buildModels() (*hsm.Model, error) {
 			}
 		}
 	}
-	r.indexTimerEvents()
-	r.collectSubmachineStates(r.caseData.Model, "/"+mainName, "/"+mainName, "/"+mainName)
-	return r.buildModel(r.caseData.Model)
+	mainModelIR := r.modelIRs[mainName]
+	r.indexTimerEvents(mainModelIR)
+	r.collectSubmachineStates(mainModelIR, "/"+mainName, "/"+mainName, "/"+mainName)
+	return r.buildModel(r.rawModelIRs[mainName])
 }
 
-func (r *runner) indexTimerEvents() {
+func (r *runner) resolveModelIRs() error {
+	return resolveModelIRMap(r.modelIRs)
+}
+
+func resolveModelIRMap(modelIRs map[string]anyMap) error {
+	names := make([]string, 0, len(modelIRs))
+	for name := range modelIRs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		modelIR := modelIRs[name]
+		if _, ok := modelIR["redefines"]; !ok {
+			continue
+		}
+		merged, err := redefinedModelIRFrom(modelIRs, modelIR, map[string]bool{})
+		if err != nil {
+			return err
+		}
+		modelIRs[name] = merged
+	}
+	return nil
+}
+
+func (r *runner) indexTimerEvents(modelIR anyMap) {
 	r.timerEventsByOwner = map[string][]timerEventDef{}
-	name, _ := r.caseData.Model["name"].(string)
+	name, _ := modelIR["name"].(string)
 	if name == "" {
 		return
 	}
 	builder := &timerIndexBuilder{r: r, members: map[string]bool{}}
-	builder.indexModel(r.caseData.Model, "/"+name, "/"+name, "/"+name, map[string]bool{})
+	builder.indexModel(modelIR, "/"+name, "/"+name, "/"+name, map[string]bool{})
 }
 
 func (b *timerIndexBuilder) addMember(name string) {
@@ -1498,17 +1584,10 @@ func (b *timerIndexBuilder) memberCount() int {
 
 func (b *timerIndexBuilder) indexModel(modelIR anyMap, ownerPath, sourceRoot, targetRoot string, seen map[string]bool) {
 	b.addMember(ownerPath)
-	for attrName := range object(modelIR["attributes"]) {
-		b.addMember(path.Join(ownerPath, attrName))
-	}
-	for opName := range object(modelIR["operations"]) {
-		b.addMember(path.Join(ownerPath, opName))
-	}
 	if _, ok := modelIR["initial"]; ok {
 		b.addMember(path.Join(ownerPath, ".initial"))
 		b.addMember(path.Join(ownerPath, ".initial", "initial"))
 	}
-	b.predeclareStates(arrayAny(modelIR["states"]), ownerPath)
 	for _, stateAny := range arrayAny(modelIR["states"]) {
 		b.indexState(object(stateAny), ownerPath, sourceRoot, targetRoot, nil, nil, seen)
 	}
@@ -1535,17 +1614,6 @@ func (b *timerIndexBuilder) indexModel(modelIR anyMap, ownerPath, sourceRoot, ta
 	}
 }
 
-func (b *timerIndexBuilder) predeclareStates(states []any, ownerPath string) {
-	for _, stateAny := range states {
-		stateIR := object(stateAny)
-		name, _ := stateIR["name"].(string)
-		if name == "" {
-			continue
-		}
-		b.addMember(path.Join(ownerPath, name))
-	}
-}
-
 func (b *timerIndexBuilder) indexState(stateIR anyMap, ownerPath, sourceRoot, targetRoot string, prependedTransitions, postpendedTransitions map[string][]anyMap, seen map[string]bool) {
 	if stateIR == nil {
 		return
@@ -1565,11 +1633,6 @@ func (b *timerIndexBuilder) indexState(stateIR anyMap, ownerPath, sourceRoot, ta
 			b.addMember(path.Join(statePath, field, strconv.Itoa(index)))
 		}
 	}
-	for _, event := range arrayAny(stateIR["defer"]) {
-		if eventName, err := eventNameValue(event); err == nil {
-			b.addMember(eventName)
-		}
-	}
 	kindName, _ := stateIR["kind"].(string)
 	transitionOwner := statePath
 	bareTargets := false
@@ -1580,7 +1643,6 @@ func (b *timerIndexBuilder) indexState(stateIR anyMap, ownerPath, sourceRoot, ta
 	if kindName == "submachine" {
 		b.indexSubmachine(stateIR, statePath, seen)
 	} else {
-		b.predeclareStates(arrayAny(stateIR["states"]), statePath)
 		for _, child := range arrayAny(stateIR["states"]) {
 			b.indexState(object(child), statePath, sourceRoot, targetRoot, prependedTransitions, postpendedTransitions, seen)
 		}
@@ -1609,29 +1671,29 @@ func (b *timerIndexBuilder) indexSubmachine(stateIR anyMap, statePath string, se
 	}
 	seen[machineName] = true
 	defer delete(seen, machineName)
-	for attrName := range object(childModel["attributes"]) {
-		b.addMember(path.Join(statePath, attrName))
-	}
-	for opName := range object(childModel["operations"]) {
-		b.addMember(path.Join(statePath, opName))
-	}
-	for _, raw := range arrayAny(childModel["exit_points"]) {
-		exitPoint := object(raw)
-		name, _ := exitPoint["name"].(string)
-		if name == "" {
-			continue
-		}
-		b.indexTransition(anyMap{"trigger": anyMap{"kind": "on", "event": exitPointEnterEventName(statePath, name)}}, statePath, 0)
-	}
 	if _, ok := childModel["initial"]; ok {
 		b.addMember(path.Join(statePath, ".initial"))
 		b.addMember(path.Join(statePath, ".initial", "initial"))
 	}
-	prependedTransitions := map[string][]anyMap{}
-	postpendedTransitions := map[string][]anyMap{}
-	deferredRootTransitions := make([]anyMap, 0)
 	childRoot := "/" + machineName
-	for _, transition := range arrayAny(childModel["transitions"]) {
+	buckets, _ := partitionSubmachineTransitions(arrayAny(childModel["transitions"]), statePath, childRoot, false)
+	for _, child := range arrayAny(childModel["states"]) {
+		b.indexState(object(child), statePath, childRoot, statePath, buckets.prepended, buckets.postpended, seen)
+	}
+	transitionOrdinal := 0
+	for _, transition := range buckets.root {
+		transitionOrdinal++
+		b.indexTransition(transition, statePath, transitionOrdinal)
+	}
+}
+
+func partitionSubmachineTransitions(transitions []any, statePath, childRoot string, strict bool) (submachineTransitionBuckets, error) {
+	buckets := submachineTransitionBuckets{
+		prepended:  map[string][]anyMap{},
+		postpended: map[string][]anyMap{},
+		root:       make([]anyMap, 0),
+	}
+	for _, transition := range transitions {
 		transitionIR := object(transition)
 		if transitionIR == nil {
 			continue
@@ -1639,27 +1701,22 @@ func (b *timerIndexBuilder) indexSubmachine(stateIR anyMap, statePath string, se
 		if rawSource, ok := transitionIR["source"]; ok {
 			source, err := requireStringValue(rawSource)
 			if err != nil {
+				if strict {
+					return buckets, err
+				}
 				continue
 			}
 			sourcePath := resolvePathInScope(source, statePath, false, childRoot, statePath)
 			if isExitPointTrigger(transitionIR) && transitionIR["guard"] == nil {
-				postpendedTransitions[sourcePath] = append(postpendedTransitions[sourcePath], transitionIR)
+				buckets.postpended[sourcePath] = append(buckets.postpended[sourcePath], transitionIR)
 			} else {
-				prependedTransitions[sourcePath] = append(prependedTransitions[sourcePath], transitionIR)
+				buckets.prepended[sourcePath] = append(buckets.prepended[sourcePath], transitionIR)
 			}
 			continue
 		}
-		deferredRootTransitions = append(deferredRootTransitions, transitionIR)
+		buckets.root = append(buckets.root, transitionIR)
 	}
-	b.predeclareStates(arrayAny(childModel["states"]), statePath)
-	for _, child := range arrayAny(childModel["states"]) {
-		b.indexState(object(child), statePath, childRoot, statePath, prependedTransitions, postpendedTransitions, seen)
-	}
-	transitionOrdinal := 0
-	for _, transition := range deferredRootTransitions {
-		transitionOrdinal++
-		b.indexTransition(transition, statePath, transitionOrdinal)
-	}
+	return buckets, nil
 }
 
 func (b *timerIndexBuilder) indexTransition(transitionIR anyMap, ownerPath string, transitionOrdinal int) {
@@ -1680,28 +1737,21 @@ func (b *timerIndexBuilder) indexTransition(transitionIR anyMap, ownerPath strin
 		}
 	}
 	kindName, _ := trigger["kind"].(string)
+	isTimerTrigger := false
 	switch kindName {
 	case "after", "every", "at":
+		isTimerTrigger = true
 		timerPart := timerPartForKind(kindName)
 		if timerPart != "" {
-			name := path.Join(transitionName, timerPart, strconv.Itoa(b.memberCount()))
-			b.addMember(name)
+			name := path.Join(transitionName, timerPart)
 			b.r.timerEventsByOwner[ownerPath] = append(b.r.timerEventsByOwner[ownerPath], timerEventDef{
 				name:              name,
 				kind:              kindName,
 				transitionOrdinal: transitionOrdinal,
 			})
 		}
-	case "on":
-		for _, event := range triggerEvents(trigger) {
-			b.addMember(event)
-		}
-	case "on_set", "when":
-		if attr, ok := trigger["attribute"].(string); ok && attr != "" {
-			b.addMember(attr)
-		}
 	}
-	if transitionIR["guard"] != nil {
+	if isTimerTrigger || transitionIR["guard"] != nil {
 		b.addMember(path.Join(transitionName, "guard"))
 	}
 	for index := range arrayAny(transitionIR["effects"]) {
@@ -1723,7 +1773,46 @@ func triggerEvents(trigger anyMap) []string {
 	return names
 }
 
-func (r *runner) buildModel(modelIR anyMap) (*hsm.Model, error) {
+func (r *runner) buildEntryPoint(entryPoint anyMap, ownerPath, sourceRoot, targetRoot string) (hsm.RedefinableElement, error) {
+	name, err := requireString(entryPoint, "name")
+	if err != nil {
+		return nil, err
+	}
+	target, err := requireString(entryPoint, "target")
+	if err != nil {
+		return nil, err
+	}
+	resolvedTarget := resolveInitialTarget(target, ownerPath, sourceRoot, targetRoot)
+	parts := []hsm.RedefinableElement{hsm.Target(buildPathExpression(target, resolvedTarget, sourceRoot, targetRoot))}
+	effectRefs := arrayAny(entryPoint["effects"])
+	if len(effectRefs) > 0 {
+		ids, err := r.requireBehaviorIDs(effectRefs)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, hsm.Effect(r.effectCallback(ids, targetRoot)))
+	}
+	return hsm.EntryPoint(name, parts...), nil
+}
+
+func (r *runner) buildExitPoint(exitPoint anyMap, boundary string) (hsm.RedefinableElement, error) {
+	name, err := requireString(exitPoint, "name")
+	if err != nil {
+		return nil, err
+	}
+	ids, err := r.requireBehaviorIDs(arrayAny(exitPoint["effects"]))
+	if err != nil {
+		return nil, err
+	}
+	parts := make([]hsm.RedefinableElement, 0, 1)
+	if len(ids) > 0 {
+		parts = append(parts, hsm.Effect(r.effectCallback(ids, boundary)))
+	}
+	r.exitPoints[path.Join(boundary, name)] = exitPointDef{boundary: boundary, name: name, ids: ids}
+	return hsm.ExitPoint(name, parts...), nil
+}
+
+func (r *runner) buildModel(modelIR anyMap) (*hsm.FinalizedModel, error) {
 	name, err := requireString(modelIR, "name")
 	if err != nil {
 		return nil, err
@@ -1731,44 +1820,77 @@ func (r *runner) buildModel(modelIR anyMap) (*hsm.Model, error) {
 	if model := r.models[name]; model != nil {
 		return model, nil
 	}
+	effectiveModelIR := r.modelIRs[name]
+	if effectiveModelIR == nil {
+		effectiveModelIR = modelIR
+	}
+	var baseModel *hsm.FinalizedModel
+	if _, ok := modelIR["redefines"]; ok {
+		baseName, err := requireStringValue(modelIR["redefines"])
+		if err != nil {
+			return nil, fmt.Errorf("missing_submachine_model: %w", err)
+		}
+		baseIR := r.rawModelIRs[baseName]
+		if baseIR == nil {
+			return nil, fmt.Errorf("missing_submachine_model: %s", baseName)
+		}
+		baseModel, err = r.buildModel(baseIR)
+		if err != nil {
+			return nil, err
+		}
+	}
 	parts := make([]hsm.RedefinableElement, 0)
 	attrNames := make([]string, 0)
-	if len(arrayAny(modelIR["entry_points"])) > 0 || len(arrayAny(modelIR["exit_points"])) > 0 {
-		return nil, fmt.Errorf("unsupported_connection_points: model %q connection points are only supported when instantiated as a submachine", name)
-	}
 	for attrName, specAny := range object(modelIR["attributes"]) {
 		attrNames = append(attrNames, attrName)
 		spec := object(specAny)
 		r.registerAttrSpec(attrName, spec)
 		r.registerAttrSpec(path.Join("/"+name, attrName), spec)
-		if value, ok := spec["default"]; ok {
-			parts = append(parts, hsm.Attribute(attrName, r.runtimeAttrValue(attrName, normalizeJSONValue(value))))
-		} else {
-			parts = append(parts, hsm.Attribute(attrName))
-		}
+		parts = append(parts, r.attributeBuilder(attrName, spec))
 	}
 	sort.Strings(attrNames)
 	r.attrs[name] = attrNames
 	r.scopedAttrs["/"+name] = attrNames
+	for attrName, specAny := range object(effectiveModelIR["attributes"]) {
+		spec := object(specAny)
+		r.registerAttrSpec(attrName, spec)
+		r.registerAttrSpec(path.Join("/"+name, attrName), spec)
+	}
 	for opName, refAny := range object(modelIR["operations"]) {
 		behaviorID, err := r.requireBehaviorID(refAny)
 		if err != nil {
 			return nil, err
 		}
-		operationPath := path.Join("/"+name, opName)
-		parts = append(parts, hsm.Operation(operationPath, r.operationCallback("/"+name, opName, behaviorID)))
-		r.operations[operationPath] = true
-		r.operationBehaviors[operationPath] = behaviorID
+		parts = append(parts, hsm.Operation(opName, r.operationCallback("", opName, behaviorID)))
 	}
-	initial, ok := modelIR["initial"]
-	if !ok {
-		return nil, fmt.Errorf("missing initial")
-	}
-	initialPart, err := r.buildInitial(initial, "/"+name, "/"+name, "/"+name)
-	if err != nil {
+	if err := r.registerOperationBindings(name, effectiveModelIR); err != nil {
 		return nil, err
 	}
-	parts = append(parts, initialPart)
+	for _, raw := range arrayAny(modelIR["entry_points"]) {
+		entryPoint, err := r.buildEntryPoint(object(raw), "/"+name, "/"+name, "/"+name)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, entryPoint)
+	}
+	for _, raw := range arrayAny(modelIR["exit_points"]) {
+		exitPoint, err := r.buildExitPoint(object(raw), "/"+name)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, exitPoint)
+	}
+	initial, ok := modelIR["initial"]
+	if !ok && baseModel == nil {
+		return nil, fmt.Errorf("missing initial")
+	}
+	if ok {
+		initialPart, err := r.buildInitial(initial, "/"+name, "/"+name, "/"+name)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, initialPart)
+	}
 	for _, stateAny := range arrayAny(modelIR["states"]) {
 		stateIR := object(stateAny)
 		if stateIR == nil {
@@ -1812,17 +1934,257 @@ func (r *runner) buildModel(modelIR anyMap) (*hsm.Model, error) {
 		}
 	}
 	sort.Strings(exitPointPaths)
+	modelRoot := "/" + name
 	for _, exitPointPath := range exitPointPaths {
 		def := r.exitPoints[exitPointPath]
 		parts = append(parts, hsm.Transition(
-			hsm.On(hsm.Event{Name: exitPointEventName(def.boundary, def.name), Kind: hsm.CompletionEventKind}),
+			hsm.Source(buildPathExpression(exitPointPath, exitPointPath, modelRoot, modelRoot)),
+			hsm.Target(buildPathExpression(def.boundary, def.boundary, modelRoot, modelRoot)),
 			hsm.Effect(r.unhandledExitPointCallback(def.name)),
 		))
 	}
-	model := hsm.Define(name, parts...)
+	attrSet := map[string]bool{}
+	effectiveAttrNames := make([]string, 0)
+	for attrName := range object(effectiveModelIR["attributes"]) {
+		effectiveAttrNames = append(effectiveAttrNames, attrName)
+	}
+	if len(effectiveAttrNames) == 0 {
+		effectiveAttrNames = attrNames
+	}
+	mergedAttrNames := make([]string, 0, len(effectiveAttrNames))
+	for _, attrName := range effectiveAttrNames {
+		if !attrSet[attrName] {
+			attrSet[attrName] = true
+			mergedAttrNames = append(mergedAttrNames, attrName)
+		}
+	}
+	sort.Strings(mergedAttrNames)
+	if len(mergedAttrNames) > 0 {
+		r.attrs[name] = mergedAttrNames
+		r.scopedAttrs["/"+name] = mergedAttrNames
+	}
+	var model hsm.FinalizedModel
+	if baseModel != nil {
+		args := make([]any, 0, len(parts)+1)
+		args = append(args, name)
+		for _, part := range parts {
+			args = append(args, part)
+		}
+		model = hsm.Redefine(*baseModel, args...)
+	} else {
+		model = hsm.Define(name, parts...)
+	}
 	r.models[name] = &model
 	r.bindModelTimerEventNames(&model)
 	return &model, nil
+}
+
+func (r *runner) registerOperationBindings(modelName string, modelIR anyMap) error {
+	for opName, refAny := range object(modelIR["operations"]) {
+		behaviorID, err := r.requireBehaviorID(refAny)
+		if err != nil {
+			return err
+		}
+		operationPath := path.Join("/"+modelName, opName)
+		r.operations[operationPath] = true
+		r.operationBehaviors[operationPath] = behaviorID
+	}
+	return nil
+}
+
+func redefinedModelIRFrom(modelIRs map[string]anyMap, modelIR anyMap, seen map[string]bool) (anyMap, error) {
+	name, err := requireString(modelIR, "name")
+	if err != nil {
+		return nil, err
+	}
+	if seen[name] {
+		return nil, fmt.Errorf("submachine_model_cycle: recursive model redefine %s", name)
+	}
+	seen[name] = true
+	defer delete(seen, name)
+	baseName, err := requireStringValue(modelIR["redefines"])
+	if err != nil {
+		return nil, fmt.Errorf("missing_submachine_model: %w", err)
+	}
+	baseIR := modelIRs[baseName]
+	if baseIR == nil {
+		return nil, fmt.Errorf("missing_submachine_model: %s", baseName)
+	}
+	if _, ok := baseIR["redefines"]; ok {
+		baseIR, err = redefinedModelIRFrom(modelIRs, baseIR, seen)
+		if err != nil {
+			return nil, err
+		}
+		modelIRs[baseName] = baseIR
+	}
+	merged := cloneObject(baseIR)
+	merged["name"] = name
+	delete(merged, "redefines")
+	for _, field := range []string{"attributes", "operations"} {
+		merged[field] = mergeObjects(object(merged[field]), object(modelIR[field]))
+	}
+	for _, field := range []string{"entry_points", "exit_points"} {
+		merged[field] = mergeNamedArray(arrayAny(merged[field]), arrayAny(normalizeJSONValue(modelIR[field])))
+	}
+	overlayStates := arrayAny(normalizeJSONValue(modelIR["states"]))
+	replacedStates := namedArrayNames(overlayStates)
+	merged["states"] = mergeNamedArray(arrayAny(merged["states"]), overlayStates)
+	merged["transitions"] = mergeTransitionArray(
+		arrayAny(merged["transitions"]),
+		arrayAny(normalizeJSONValue(modelIR["transitions"])),
+		baseName,
+		name,
+		replacedStates,
+	)
+	for _, field := range []string{"observations"} {
+		merged[field] = append(arrayAny(merged[field]), arrayAny(normalizeJSONValue(modelIR[field]))...)
+	}
+	if initial, ok := modelIR["initial"]; ok {
+		merged["initial"] = normalizeJSONValue(initial)
+	}
+	return merged, nil
+}
+
+func cloneObject(value any) anyMap {
+	cloned := object(normalizeJSONValue(value))
+	if cloned == nil {
+		return anyMap{}
+	}
+	return cloned
+}
+
+func mergeObjects(base, overlay anyMap) anyMap {
+	merged := cloneObject(base)
+	for key, value := range overlay {
+		merged[key] = normalizeJSONValue(value)
+	}
+	return merged
+}
+
+func mergeNamedArray(base, overlay []any) []any {
+	merged := make([]any, 0, len(base)+len(overlay))
+	used := map[int]bool{}
+	for _, baseItem := range base {
+		baseName, _ := object(baseItem)["name"].(string)
+		replacementIndex := -1
+		if baseName != "" {
+			for index, overlayItem := range overlay {
+				overlayName, _ := object(overlayItem)["name"].(string)
+				if !used[index] && overlayName == baseName {
+					replacementIndex = index
+					break
+				}
+			}
+		}
+		if replacementIndex >= 0 {
+			merged = append(merged, normalizeJSONValue(overlay[replacementIndex]))
+			used[replacementIndex] = true
+			continue
+		}
+		merged = append(merged, normalizeJSONValue(baseItem))
+	}
+	for index, overlayItem := range overlay {
+		if !used[index] {
+			merged = append(merged, normalizeJSONValue(overlayItem))
+		}
+	}
+	return merged
+}
+
+func namedArrayNames(values []any) map[string]bool {
+	names := map[string]bool{}
+	for _, value := range values {
+		name, _ := object(value)["name"].(string)
+		if name != "" {
+			names[name] = true
+		}
+	}
+	return names
+}
+
+func mergeTransitionArray(base, overlay []any, baseName, modelName string, replacedStates map[string]bool) []any {
+	overlayIDs := map[string]bool{}
+	for _, value := range overlay {
+		id, _ := object(value)["id"].(string)
+		if id != "" {
+			overlayIDs[id] = true
+		}
+	}
+	merged := make([]any, 0, len(base)+len(overlay))
+	for _, value := range base {
+		transition := object(value)
+		id, _ := transition["id"].(string)
+		if id != "" && overlayIDs[id] {
+			continue
+		}
+		if transitionDependsOnReplacedState(transition, baseName, modelName, replacedStates) {
+			continue
+		}
+		merged = append(merged, normalizeJSONValue(value))
+	}
+	for _, value := range overlay {
+		merged = append(merged, normalizeJSONValue(value))
+	}
+	return merged
+}
+
+func transitionDependsOnReplacedState(transition anyMap, baseName, modelName string, replacedStates map[string]bool) bool {
+	if len(replacedStates) == 0 {
+		return false
+	}
+	if source, ok := transition["source"]; ok {
+		sourceName, err := requireStringValue(source)
+		if err == nil {
+			top, ok := rootRelativeTop(sourceName, baseName, modelName)
+			if ok && replacedStates[top] {
+				return true
+			}
+		}
+	}
+	if target, ok := transition["target"]; ok {
+		targetName, err := requireStringValue(target)
+		if err == nil {
+			top, descendant := rootRelativeTop(targetName, baseName, modelName)
+			if descendant && replacedStates[top] && targetReferencesDescendant(targetName, baseName, modelName, top) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func rootRelativeTop(raw, baseName, modelName string) (string, bool) {
+	clean := path.Clean(raw)
+	if clean == "." || clean == "/" || clean == "" {
+		return "", false
+	}
+	trimmed := strings.TrimPrefix(clean, "./")
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) == 0 || parts[0] == "" || parts[0] == ".." {
+		return "", false
+	}
+	if parts[0] == baseName || parts[0] == modelName {
+		if len(parts) < 2 {
+			return "", false
+		}
+		return parts[1], true
+	}
+	return parts[0], true
+}
+
+func targetReferencesDescendant(raw, baseName, modelName, top string) bool {
+	clean := path.Clean(raw)
+	trimmed := strings.TrimPrefix(clean, "./")
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) == 0 {
+		return false
+	}
+	if parts[0] == baseName || parts[0] == modelName {
+		return len(parts) > 2 && parts[1] == top
+	}
+	return len(parts) > 1 && parts[0] == top
 }
 
 func rootTransitionRequiresExpansion(transitionIR anyMap) bool {
@@ -1919,7 +2281,8 @@ func (r *runner) buildInitial(raw any, ownerPath, sourceRoot, targetRoot string)
 		}
 		effects = arrayAny(m["effects"])
 	}
-	parts := []hsm.RedefinableElement{hsm.Target(resolveInitialTarget(target, ownerPath, sourceRoot, targetRoot))}
+	resolvedTarget := resolveInitialTarget(target, ownerPath, sourceRoot, targetRoot)
+	parts := []hsm.RedefinableElement{hsm.Target(buildPathExpression(target, resolvedTarget, sourceRoot, targetRoot))}
 	if len(effects) > 0 {
 		ids := make([]string, 0, len(effects))
 		for _, ref := range effects {
@@ -2002,19 +2365,26 @@ func (r *runner) buildState(stateIR anyMap, ownerPath, sourceRoot, targetRoot st
 			parts = append(parts, hsm.Activity(r.activityCallback(ids, targetRoot, statePath)))
 		}
 	}
-	for _, event := range arrayAny(stateIR["defer"]) {
-		name, err := eventNameValue(event)
-		if err != nil {
-			return nil, err
+	if rawDefer, hasDefer := stateIR["defer"]; hasDefer {
+		deferEvents := arrayAny(rawDefer)
+		if len(deferEvents) == 0 {
+			parts = append(parts, hsm.Defer([]hsm.Event{}...))
 		}
-		if r.deferEvents[statePath] == nil {
-			r.deferEvents[statePath] = map[string]bool{}
+		for _, event := range deferEvents {
+			name, err := eventNameValue(event)
+			if err != nil {
+				return nil, err
+			}
+			if r.deferEvents[statePath] == nil {
+				r.deferEvents[statePath] = map[string]bool{}
+			}
+			r.deferEvents[statePath][name] = true
+			parts = append(parts, hsm.Defer(name))
 		}
-		r.deferEvents[statePath][name] = true
-		parts = append(parts, hsm.Defer(name))
 	}
 	transitionOwner := statePath
 	bareTargets := false
+	var submachineModel hsm.Model
 	if kindName == "choice" || kindName == "shallow_history" || kindName == "deep_history" {
 		transitionOwner = ownerPath
 		bareTargets = true
@@ -2024,7 +2394,7 @@ func (r *runner) buildState(stateIR anyMap, ownerPath, sourceRoot, targetRoot st
 		if err != nil {
 			return nil, err
 		}
-		parts = append(parts, childParts...)
+		submachineModel = hsm.InlineModel(childParts...)
 	}
 	if kindName == "choice" {
 		transitions := arrayAny(stateIR["transitions"])
@@ -2080,7 +2450,7 @@ func (r *runner) buildState(stateIR anyMap, ownerPath, sourceRoot, targetRoot st
 	case "deep_history":
 		return hsm.DeepHistory(name, parts...), nil
 	case "submachine":
-		return hsm.State(name, parts...), nil
+		return hsm.SubmachineState(name, submachineModel, parts...), nil
 	default:
 		return nil, fmt.Errorf("unsupported state kind %q", kindName)
 	}
@@ -2117,13 +2487,10 @@ func (r *runner) buildSubmachineParts(stateIR anyMap, statePath string) ([]hsm.R
 	for attrName, specAny := range object(childModel["attributes"]) {
 		childAttrNames = append(childAttrNames, attrName)
 		spec := object(specAny)
-		qualifiedAttr := path.Join(statePath, attrName)
+		qualifiedAttr := path.Join(rootPath(statePath), attrName)
+		r.registerAttrSpec(attrName, spec)
 		r.registerAttrSpec(qualifiedAttr, spec)
-		if value, ok := spec["default"]; ok {
-			parts = append(parts, hsm.Attribute(qualifiedAttr, r.runtimeAttrValue(qualifiedAttr, normalizeJSONValue(value))))
-		} else {
-			parts = append(parts, hsm.Attribute(qualifiedAttr))
-		}
+		parts = append(parts, r.attributeBuilder(attrName, spec))
 	}
 	sort.Strings(childAttrNames)
 	r.scopedAttrs[statePath] = childAttrNames
@@ -2132,52 +2499,24 @@ func (r *runner) buildSubmachineParts(stateIR anyMap, statePath string) ([]hsm.R
 		if err != nil {
 			return nil, err
 		}
-		operationPath := path.Join(statePath, opName)
-		if r.operations[operationPath] {
-			return nil, fmt.Errorf("duplicate_operation: %s", operationPath)
-		}
-		parts = append(parts, hsm.Operation(operationPath, r.operationCallback(statePath, opName, behaviorID)))
+		operationPath := path.Join(rootPath(statePath), opName)
+		parts = append(parts, hsm.Operation(opName, r.operationCallback(rootPath(statePath), opName, behaviorID)))
 		r.operations[operationPath] = true
 		r.operationBehaviors[operationPath] = behaviorID
 	}
-	for _, raw := range arrayAny(childModel["exit_points"]) {
-		exitPoint := object(raw)
-		name, err := requireString(exitPoint, "name")
+	for _, raw := range arrayAny(childModel["entry_points"]) {
+		entryPoint, err := r.buildEntryPoint(object(raw), statePath, childRoot, statePath)
 		if err != nil {
 			return nil, err
 		}
-		effectRefs := arrayAny(exitPoint["effects"])
-		ids := make([]string, 0, len(effectRefs))
-		for _, ref := range effectRefs {
-			behaviorID, err := r.requireBehaviorID(ref)
-			if err != nil {
-				return nil, err
-			}
-			ids = append(ids, behaviorID)
-		}
-		r.exitPoints[path.Join(statePath, name)] = exitPointDef{boundary: statePath, name: name, ids: ids}
+		parts = append(parts, entryPoint)
 	}
-	for _, def := range sortedExitPointDefs(r.exitPoints, statePath) {
-		transitionParts := []hsm.RedefinableElement{
-			hsm.On(hsm.Event{Name: exitPointEnterEventName(def.boundary, def.name), Kind: hsm.CompletionEventKind}),
+	for _, raw := range arrayAny(childModel["exit_points"]) {
+		exitPoint, err := r.buildExitPoint(object(raw), statePath)
+		if err != nil {
+			return nil, err
 		}
-		if len(def.ids) > 0 {
-			effectRefs := make([]any, 0, len(def.ids))
-			for _, id := range def.ids {
-				effectRefs = append(effectRefs, anyMap{"behavior": id})
-			}
-			ids := make([]string, 0, len(effectRefs))
-			for _, ref := range effectRefs {
-				behaviorID, err := r.requireBehaviorID(ref)
-				if err != nil {
-					return nil, err
-				}
-				ids = append(ids, behaviorID)
-			}
-			transitionParts = append(transitionParts, hsm.Effect(r.effectCallback(ids, statePath)))
-		}
-		transitionParts = append(transitionParts, hsm.Effect(r.exitPointDispatch(def.boundary, def.name)))
-		parts = append(parts, hsm.Transition(transitionParts[0], transitionParts[1:]...))
+		parts = append(parts, exitPoint)
 	}
 	initial, ok := childModel["initial"]
 	if !ok {
@@ -2188,35 +2527,19 @@ func (r *runner) buildSubmachineParts(stateIR anyMap, statePath string) ([]hsm.R
 		return nil, err
 	}
 	parts = append(parts, initialPart)
-	prependedTransitions := map[string][]anyMap{}
-	postpendedTransitions := map[string][]anyMap{}
-	deferredRootTransitions := make([]anyMap, 0)
-	for _, transition := range arrayAny(childModel["transitions"]) {
-		transitionIR := object(transition)
-		if rawSource, ok := transitionIR["source"]; ok {
-			source, err := requireStringValue(rawSource)
-			if err != nil {
-				return nil, err
-			}
-			sourcePath := resolvePathInScope(source, statePath, false, childRoot, statePath)
-			if isExitPointTrigger(transitionIR) && transitionIR["guard"] == nil {
-				postpendedTransitions[sourcePath] = append(postpendedTransitions[sourcePath], transitionIR)
-			} else {
-				prependedTransitions[sourcePath] = append(prependedTransitions[sourcePath], transitionIR)
-			}
-			continue
-		}
-		deferredRootTransitions = append(deferredRootTransitions, transitionIR)
+	buckets, err := partitionSubmachineTransitions(arrayAny(childModel["transitions"]), statePath, childRoot, true)
+	if err != nil {
+		return nil, err
 	}
 	for _, child := range arrayAny(childModel["states"]) {
-		part, err := r.buildState(object(child), statePath, childRoot, statePath, prependedTransitions, postpendedTransitions)
+		part, err := r.buildState(object(child), statePath, childRoot, statePath, buckets.prepended, buckets.postpended)
 		if err != nil {
 			return nil, err
 		}
 		parts = append(parts, part)
 	}
 	transitionOrdinal := 0
-	for _, transition := range deferredRootTransitions {
+	for _, transition := range buckets.root {
 		transitionOrdinal++
 		part, err := r.buildTransition(transition, statePath, false, childRoot, statePath, transitionOrdinal)
 		if err != nil {
@@ -2391,31 +2714,6 @@ func (r *runner) validateExitPoints(modelIR anyMap, sourceRoot, targetRoot strin
 	return nil
 }
 
-func (r *runner) resolveEntryPointTarget(boundaryPath, entryPointName string) (string, []any, error) {
-	if entryPointName == "" {
-		return "", nil, fmt.Errorf("invalid_entry_point_usage: empty entry point")
-	}
-	machineName := r.submachineModels[boundaryPath]
-	if machineName == "" {
-		return "", nil, fmt.Errorf("invalid_entry_point_usage: target %s is not a submachine", boundaryPath)
-	}
-	modelIR := r.modelIRs[machineName]
-	for _, raw := range arrayAny(modelIR["entry_points"]) {
-		entryPoint := object(raw)
-		name, _ := entryPoint["name"].(string)
-		if name != entryPointName {
-			continue
-		}
-		target, err := requireString(entryPoint, "target")
-		if err != nil {
-			return "", nil, fmt.Errorf("missing_target: %w", err)
-		}
-		resolved := resolvePathInScope(target, boundaryPath, true, "/"+machineName, boundaryPath)
-		return resolved, arrayAny(entryPoint["effects"]), nil
-	}
-	return "", nil, fmt.Errorf("missing_entry_point: %s", entryPointName)
-}
-
 func (r *runner) pathExistsInModel(modelIR anyMap, sourceRoot, targetRoot, want string) bool {
 	var walk func([]any, string) bool
 	walk = func(states []any, ownerPath string) bool {
@@ -2459,7 +2757,11 @@ func (r *runner) buildTransitionExpanded(transitionIR anyMap, ownerPath string, 
 		return nil, fmt.Errorf("transition must be an object")
 	}
 	parts := make([]hsm.RedefinableElement, 0)
+	hasKindOverride := false
+	explicitTransitionKind := ""
 	if kindName, ok := transitionIR["kind"].(string); ok {
+		hasKindOverride = true
+		explicitTransitionKind = kindName
 		switch kindName {
 		case "internal", "local", "external", "self":
 			parts = append(parts, transitionKindOverride(transitionKind(kindName)))
@@ -2468,6 +2770,7 @@ func (r *runner) buildTransitionExpanded(transitionIR anyMap, ownerPath string, 
 		}
 	}
 	var sourcePath string
+	var sourcePart hsm.RedefinableElement
 	if rawSource, ok := transitionIR["source"]; ok {
 		source, err := requireStringValue(rawSource)
 		if err != nil {
@@ -2477,7 +2780,7 @@ func (r *runner) buildTransitionExpanded(transitionIR anyMap, ownerPath string, 
 		if sourceRoot == targetRoot && r.isSubmachineInternalPath(sourcePath) {
 			return nil, fmt.Errorf("invalid_submachine_internal_source: %s", sourcePath)
 		}
-		parts = append(parts, hsm.Source(sourcePath))
+		sourcePart = hsm.Source(buildPathExpression(source, sourcePath, sourceRoot, targetRoot))
 	}
 	trigger := object(transitionIR["trigger"])
 	if trigger == nil {
@@ -2488,6 +2791,7 @@ func (r *runner) buildTransitionExpanded(transitionIR anyMap, ownerPath string, 
 	var whenGuard func(context.Context, *confInstance, hsm.Event) bool
 	var exitPointName string
 	var exitPointBoundary string
+	var exitPointPart hsm.RedefinableElement
 	var completionGuard func(context.Context, *confInstance, hsm.Event) bool
 	if trigger != nil {
 		var part hsm.RedefinableElement
@@ -2504,7 +2808,10 @@ func (r *runner) buildTransitionExpanded(transitionIR anyMap, ownerPath string, 
 				err = r.validateExitPointHandler(exitPointBoundary, exitPointName)
 			}
 			if err == nil {
-				part = hsm.On(r.exitPointEvents(exitPointBoundary, exitPointName)...)
+				_, err = r.resolveExitPoint(exitPointBoundary, exitPointName)
+			}
+			if err == nil {
+				exitPointPart = hsm.ExitPoint(exitPointName)
 			}
 		} else {
 			part, err = r.buildTrigger(trigger, targetRoot)
@@ -2517,7 +2824,15 @@ func (r *runner) buildTransitionExpanded(transitionIR anyMap, ownerPath string, 
 		if err != nil {
 			return nil, err
 		}
-		parts = append(parts, part)
+		if part != nil {
+			parts = append(parts, part)
+		}
+	}
+	if sourcePart != nil {
+		parts = append(parts, sourcePart)
+	}
+	if exitPointPart != nil {
+		parts = append(parts, exitPointPart)
 	}
 	isTimerTrigger := trigger != nil && (trigger["kind"] == "after" || trigger["kind"] == "every" || trigger["kind"] == "at")
 	timerEventName := ""
@@ -2525,11 +2840,13 @@ func (r *runner) buildTransitionExpanded(transitionIR anyMap, ownerPath string, 
 		kindName, _ := trigger["kind"].(string)
 		timerEventName = r.timerEventNameForIR(ownerPath, kindName, transitionOrdinal)
 	}
+	hasGuardPart := false
 	if guardRef, ok := transitionIR["guard"]; ok {
 		behaviorID, err := r.requireBehaviorID(guardRef)
 		if err != nil {
 			return nil, err
 		}
+		hasGuardPart = true
 		if isTimerTrigger {
 			parts = append(parts, hsm.Guard(r.timerFiredGuard(behaviorID, true, targetRoot, timerEventName)))
 		} else if whenGuard != nil {
@@ -2546,16 +2863,16 @@ func (r *runner) buildTransitionExpanded(transitionIR anyMap, ownerPath string, 
 			parts = append(parts, hsm.Guard(r.guardCallback(behaviorID, targetRoot)))
 		}
 	} else if isTimerTrigger {
+		hasGuardPart = true
 		parts = append(parts, hsm.Guard(r.timerFiredGuard("", false, targetRoot, timerEventName)))
 	} else if whenGuard != nil {
+		hasGuardPart = true
 		parts = append(parts, hsm.Guard(whenGuard))
 	} else if completionGuard != nil {
+		hasGuardPart = true
 		parts = append(parts, hsm.Guard(completionGuard))
 	}
 	var resolvedTarget string
-	var entryPointEffects []any
-	var entryPointEffectScope string
-	var exitPointDispatch *exitPointDef
 	entryPointName, hasEntryPoint := transitionIR["entry_point"].(string)
 	if hasEntryPoint && strings.Contains(entryPointName, "/") {
 		return nil, fmt.Errorf("invalid_name: entry point selector %q", entryPointName)
@@ -2573,13 +2890,14 @@ func (r *runner) buildTransitionExpanded(transitionIR anyMap, ownerPath string, 
 		}
 		resolvedTarget = resolveTransitionTarget(target, ownerPath, sourcePath, bareTargets, sourceRoot, targetRoot)
 		if hasEntryPoint {
-			entryPointEffectScope = resolvedTarget
-			entryTarget, effects, err := r.resolveEntryPointTarget(resolvedTarget, entryPointName)
-			if err != nil {
-				return nil, err
+			entryPointBoundary := resolvedTarget
+			source := sourcePath
+			if source == "" {
+				source = ownerPath
 			}
-			resolvedTarget = entryTarget
-			entryPointEffects = effects
+			if !hasKindOverride && entryPointBoundary == source {
+				parts = append(parts, transitionKindOverride(hsm.ExternalKind))
+			}
 		}
 		if !hasEntryPoint && sourceRoot == targetRoot && r.isSubmachineInternalPath(resolvedTarget) {
 			return nil, fmt.Errorf("invalid_submachine_internal_target: %s", resolvedTarget)
@@ -2588,14 +2906,11 @@ func (r *runner) buildTransitionExpanded(transitionIR anyMap, ownerPath string, 
 			if def.boundary != targetRoot {
 				return nil, fmt.Errorf("invalid_submachine_internal_target: %s", resolvedTarget)
 			}
-			exitPointDispatch = &def
-			if r.hasExitPointHandler(def.boundary, def.name) {
-				resolvedTarget = def.boundary
-			} else {
-				resolvedTarget = sourcePath
-			}
 		}
-		parts = append(parts, hsm.Target(resolvedTarget))
+		parts = append(parts, hsm.Target(buildPathExpression(target, resolvedTarget, sourceRoot, targetRoot)))
+		if hasEntryPoint {
+			parts = append(parts, hsm.EntryPoint(entryPointName))
+		}
 	} else if hasEntryPoint {
 		return nil, fmt.Errorf("invalid_entry_point_usage: entry point %q requires target", entryPointName)
 	}
@@ -2617,30 +2932,14 @@ func (r *runner) buildTransitionExpanded(transitionIR anyMap, ownerPath string, 
 	}
 	effectRefs := arrayAny(transitionIR["effects"])
 	if len(effectRefs) > 0 {
-		ids := make([]string, 0, len(effectRefs))
-		for _, ref := range effectRefs {
-			behaviorID, err := r.requireBehaviorID(ref)
-			if err != nil {
-				return nil, err
-			}
-			ids = append(ids, behaviorID)
+		ids, err := r.requireBehaviorIDs(effectRefs)
+		if err != nil {
+			return nil, err
 		}
 		parts = append(parts, hsm.Effect(r.effectCallback(ids, targetRoot)))
 	}
-	if len(entryPointEffects) > 0 {
-		ids := make([]string, 0, len(entryPointEffects))
-		for _, ref := range entryPointEffects {
-			behaviorID, err := r.requireBehaviorID(ref)
-			if err != nil {
-				return nil, err
-			}
-			ids = append(ids, behaviorID)
-		}
-		parts = append(parts, hsm.Effect(r.effectCallback(ids, entryPointEffectScope)))
-	}
-	if exitPointDispatch != nil {
-		def := *exitPointDispatch
-		parts = append(parts, hsm.Effect(r.exitPointEnterDispatch(def.boundary, def.name)))
+	if len(effectRefs) == 0 && explicitTransitionKind == "internal" && hasGuardPart {
+		parts = append(parts, hsm.Effect(func(context.Context, *confInstance, hsm.Event) {}))
 	}
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("transition must contain at least one part")
@@ -2747,26 +3046,6 @@ func (r *runner) activityCallback(ids []string, scope, statePath string) func(co
 	}
 }
 
-func (r *runner) exitPointDispatch(boundaryPath, name string) func(context.Context, *confInstance, hsm.Event) {
-	return func(ctx context.Context, sm *confInstance, event hsm.Event) {
-		completion := hsm.Event{Name: exitPointEventName(boundaryPath, name), Kind: hsm.CompletionEventKind}
-		completion.Source = boundaryPath
-		completion.Data = event.Data
-		completion.Schema = event.Schema
-		hsm.Dispatch(ctx, sm, completion)
-	}
-}
-
-func (r *runner) exitPointEnterDispatch(boundaryPath, name string) func(context.Context, *confInstance, hsm.Event) {
-	return func(ctx context.Context, sm *confInstance, event hsm.Event) {
-		enter := hsm.Event{Name: exitPointEnterEventName(boundaryPath, name), Kind: hsm.CompletionEventKind}
-		enter.Source = boundaryPath
-		enter.Data = event.Data
-		enter.Schema = event.Schema
-		hsm.Dispatch(ctx, sm, enter)
-	}
-}
-
 func (r *runner) effectCallback(ids []string, scope string) func(context.Context, *confInstance, hsm.Event) {
 	return func(ctx context.Context, sm *confInstance, event hsm.Event) {
 		ctx = withBehaviorScope(ctx, scope)
@@ -2842,20 +3121,7 @@ func (r *runner) attrNameInScope(scope, name string) string {
 	if name == "" || path.IsAbs(name) {
 		return name
 	}
-	if scope == "" {
-		return name
-	}
-	for current := scope; current != "" && current != "." && current != "/"; {
-		if containsString(r.scopedAttrs[current], name) {
-			return path.Join(current, name)
-		}
-		next := path.Dir(current)
-		if next == current {
-			break
-		}
-		current = next
-	}
-	return path.Join(scope, name)
+	return name
 }
 
 func (r *runner) operationCallback(scopePath, opName, behaviorID string) func(context.Context, *confInstance, ...any) (any, error) {
@@ -2863,8 +3129,19 @@ func (r *runner) operationCallback(scopePath, opName, behaviorID string) func(co
 		if r.callTransitionFailed() {
 			return nil, r.lastError
 		}
-		ctx = withBehaviorScope(ctx, scopePath)
-		event := hsm.Event{Name: path.Join(scopePath, opName), Kind: hsm.CallEventKind, Data: hsm.CallData{Name: opName, Args: args}}
+		scope := scopePath
+		if scope == "" && sm != nil {
+			scope = hsm.QualifiedName(sm)
+			if scope == "" {
+				scope = rootPath(sm.State())
+			}
+		}
+		ctx = withBehaviorScope(ctx, scope)
+		eventName := opName
+		if scope != "" {
+			eventName = path.Join(scope, opName)
+		}
+		event := hsm.Event{Name: eventName, Kind: hsm.CallEventKind, Data: hsm.CallData{Name: opName, Args: args}}
 		return r.executeBehavior(ctx, sm, event, behaviorID, "operation")
 	}
 }
@@ -2913,12 +3190,32 @@ func (r *runner) callInRuntimeProcessing(ctx context.Context, sm *confInstance, 
 	if err != nil {
 		return result, err
 	}
-	hsm.Dispatch(ctx, sm, hsm.Event{
-		Name:   "@call:" + opName,
+	callEvent := hsm.Event{
+		Name:   operationPath,
 		Kind:   hsm.CallEventKind,
 		Source: operationPath,
 		Data:   hsm.CallData{Name: operationPath, Args: args},
-	})
+	}
+	if r.instanceQueues[r.instanceIDFor(sm)] != "" {
+		wait := sm.Wait()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			select {
+			case <-wait:
+			case <-ctx.Done():
+				return
+			}
+			select {
+			case <-hsm.Dispatch(ctx, sm, callEvent):
+			case <-ctx.Done():
+				r.recordError(conformanceError{code: "runtime_wait_cancelled", message: "operation call " + operationPath})
+			}
+		}()
+		r.addPendingWork(done)
+		return result, nil
+	}
+	r.addPendingWork(hsm.Dispatch(ctx, sm, callEvent))
 	return result, nil
 }
 
@@ -2938,11 +3235,6 @@ func (r *runner) operationNameInScope(ctx context.Context, sm *confInstance, nam
 	}
 	if sm != nil {
 		state := sm.State()
-		if root := rootPath(state); root != "" {
-			if r.operations[path.Join(root, name)] {
-				return name
-			}
-		}
 		if operation := r.operationNameInScopePath(state, name); operation != "" {
 			return operation
 		}
@@ -2980,19 +3272,21 @@ func (r *runner) buildTrigger(trigger anyMap, scope string) (hsm.RedefinableElem
 		if err := validateOnlyKeys(trigger, "kind", "event", "events"); err != nil {
 			return nil, fmt.Errorf("extraneous_trigger_operand: %w", err)
 		}
-		events := arrayAny(trigger["events"])
-		if len(events) == 0 {
+		events := []any{}
+		if rawEvents, hasEvents := trigger["events"]; hasEvents {
+			events = arrayAny(rawEvents)
+		} else {
 			events = []any{trigger["event"]}
 		}
-		names := make([]string, 0, len(events))
+		onEvents := make([]hsm.Event, 0, len(events))
 		for _, event := range events {
 			name, err := eventNameValue(event)
 			if err != nil {
 				return nil, err
 			}
-			names = append(names, name)
+			onEvents = append(onEvents, eventForOnName(name))
 		}
-		return hsm.On(names...), nil
+		return hsm.On(onEvents...), nil
 	case "on_set":
 		if err := validateOnlyKeys(trigger, "kind", "attribute"); err != nil {
 			return nil, fmt.Errorf("extraneous_trigger_operand: %w", err)
@@ -3003,7 +3297,7 @@ func (r *runner) buildTrigger(trigger anyMap, scope string) (hsm.RedefinableElem
 		}
 		name = r.attrNameInScope(scope, name)
 		r.traceSetAttrs[name] = true
-		return hsm.OnSet(name), nil
+		return hsm.OnSet(localBuilderName(name)), nil
 	case "on_call":
 		if err := validateOnlyKeys(trigger, "kind", "operation"); err != nil {
 			return nil, fmt.Errorf("extraneous_trigger_operand: %w", err)
@@ -3012,7 +3306,10 @@ func (r *runner) buildTrigger(trigger anyMap, scope string) (hsm.RedefinableElem
 		if err != nil {
 			return nil, err
 		}
-		return hsm.On(hsm.Event{Name: "@call:" + name, Kind: hsm.CallEventKind}), nil
+		if path.IsAbs(name) {
+			return hsm.On(hsm.Event{Name: name, Kind: hsm.CallEventKind}), nil
+		}
+		return hsm.OnCall(name), nil
 	case "completion":
 		if err := validateOnlyKeys(trigger, "kind"); err != nil {
 			return nil, fmt.Errorf("extraneous_trigger_operand: %w", err)
@@ -3065,47 +3362,6 @@ func (r *runner) exitPointName(trigger anyMap) (string, error) {
 	return name, nil
 }
 
-func exitPointEventName(boundary, name string) string {
-	return "@exit:" + path.Clean(boundary) + ":" + name
-}
-
-func exitPointEnterEventName(boundary, name string) string {
-	return "@exit-enter:" + path.Clean(boundary) + ":" + name
-}
-
-func sortedExitPointDefs(defs map[string]exitPointDef, boundary string) []exitPointDef {
-	paths := make([]string, 0)
-	for exitPointPath, def := range defs {
-		if def.boundary == boundary {
-			paths = append(paths, exitPointPath)
-		}
-	}
-	sort.Strings(paths)
-	sorted := make([]exitPointDef, 0, len(paths))
-	for _, exitPointPath := range paths {
-		sorted = append(sorted, defs[exitPointPath])
-	}
-	return sorted
-}
-
-func (r *runner) exitPointEvents(boundary, name string) []hsm.Event {
-	names := []string{exitPointEventName(boundary, name)}
-	for _, def := range r.exitPoints {
-		if def.name != name || def.boundary == boundary {
-			continue
-		}
-		if strings.HasPrefix(def.boundary, boundary+"/") {
-			names = append(names, exitPointEventName(def.boundary, name))
-		}
-	}
-	sort.Strings(names[1:])
-	events := make([]hsm.Event, 0, len(names))
-	for _, eventName := range names {
-		events = append(events, hsm.Event{Name: eventName, Kind: hsm.CompletionEventKind})
-	}
-	return events
-}
-
 func (r *runner) validateExitPointHandler(boundaryPath, name string) error {
 	machineName := r.submachineModels[boundaryPath]
 	if machineName == "" {
@@ -3116,6 +3372,34 @@ func (r *runner) validateExitPointHandler(boundaryPath, name string) error {
 		return nil
 	}
 	return fmt.Errorf("missing_exit_point: %s", name)
+}
+
+func (r *runner) resolveExitPoint(boundaryPath, name string) (exitPointDef, error) {
+	direct := make([]string, 0)
+	nested := make([]string, 0)
+	for exitPointPath, def := range r.exitPoints {
+		if def.name != name {
+			continue
+		}
+		if exitPointPath != boundaryPath && !strings.HasPrefix(exitPointPath, boundaryPath+"/") {
+			continue
+		}
+		owner := path.Dir(exitPointPath)
+		if owner == boundaryPath || path.Dir(owner) == boundaryPath {
+			direct = append(direct, exitPointPath)
+		} else {
+			nested = append(nested, exitPointPath)
+		}
+	}
+	sort.Strings(direct)
+	sort.Strings(nested)
+	if len(direct) > 0 {
+		return r.exitPoints[direct[0]], nil
+	}
+	if len(nested) > 0 {
+		return r.exitPoints[nested[0]], nil
+	}
+	return exitPointDef{}, fmt.Errorf("missing_exit_point: %s", name)
 }
 
 func (r *runner) modelDeclaresExitPoint(modelIR anyMap, name string, seen map[string]bool) bool {
@@ -3163,85 +3447,6 @@ func (r *runner) modelDeclaresExitPointInStates(states []any, name string, seen 
 	return false
 }
 
-func (r *runner) hasExitPointHandler(boundaryPath, name string) bool {
-	mainName, err := requireString(r.caseData.Model, "name")
-	if err != nil {
-		return false
-	}
-	return r.modelHasExitPointHandler(r.caseData.Model, "/"+mainName, "/"+mainName, "/"+mainName, boundaryPath, name, map[string]bool{})
-}
-
-func (r *runner) modelHasExitPointHandler(modelIR anyMap, ownerPath, sourceRoot, targetRoot, boundaryPath, name string, seen map[string]bool) bool {
-	modelName, _ := modelIR["name"].(string)
-	seenKey := modelName + "\x00" + ownerPath
-	if seen[seenKey] {
-		return false
-	}
-	seen[seenKey] = true
-	for _, transitionAny := range arrayAny(modelIR["transitions"]) {
-		if r.transitionHandlesExitPoint(object(transitionAny), ownerPath, false, sourceRoot, targetRoot, boundaryPath, name) {
-			return true
-		}
-	}
-	return r.statesHaveExitPointHandler(arrayAny(modelIR["states"]), ownerPath, sourceRoot, targetRoot, boundaryPath, name, seen)
-}
-
-func (r *runner) statesHaveExitPointHandler(states []any, ownerPath, sourceRoot, targetRoot, boundaryPath, name string, seen map[string]bool) bool {
-	for _, stateAny := range states {
-		stateIR := object(stateAny)
-		stateName, _ := stateIR["name"].(string)
-		if stateName == "" {
-			continue
-		}
-		statePath := path.Join(ownerPath, stateName)
-		kindName, _ := stateIR["kind"].(string)
-		transitionOwner := statePath
-		bareTargets := false
-		if kindName == "choice" || kindName == "shallow_history" || kindName == "deep_history" {
-			transitionOwner = ownerPath
-			bareTargets = true
-		}
-		for _, transitionAny := range arrayAny(stateIR["transitions"]) {
-			if r.transitionHandlesExitPoint(object(transitionAny), transitionOwner, bareTargets, sourceRoot, targetRoot, boundaryPath, name) {
-				return true
-			}
-		}
-		if kindName == "submachine" {
-			machineName, _ := stateIR["machine"].(string)
-			if child := r.modelIRs[machineName]; child != nil {
-				if r.modelHasExitPointHandler(child, statePath, "/"+machineName, statePath, boundaryPath, name, seen) {
-					return true
-				}
-			}
-			continue
-		}
-		if r.statesHaveExitPointHandler(arrayAny(stateIR["states"]), statePath, sourceRoot, targetRoot, boundaryPath, name, seen) {
-			return true
-		}
-	}
-	return false
-}
-
-func (r *runner) transitionHandlesExitPoint(transitionIR anyMap, ownerPath string, bareTargets bool, sourceRoot, targetRoot, boundaryPath, name string) bool {
-	trigger := object(transitionIR["trigger"])
-	if trigger == nil || trigger["kind"] != "exit_point" {
-		return false
-	}
-	exitName, _ := trigger["exit_point"].(string)
-	if exitName != name {
-		return false
-	}
-	sourcePath := ownerPath
-	if rawSource, ok := transitionIR["source"]; ok {
-		source, err := requireStringValue(rawSource)
-		if err != nil {
-			return false
-		}
-		sourcePath = resolvePathInScope(source, ownerPath, bareTargets, sourceRoot, targetRoot)
-	}
-	return sourcePath == boundaryPath
-}
-
 func isExitPointTrigger(transitionIR anyMap) bool {
 	trigger := object(transitionIR["trigger"])
 	return trigger != nil && trigger["kind"] == "exit_point"
@@ -3259,8 +3464,10 @@ func (r *runner) transitionEventNames(transitionIR anyMap, scope string) ([]stri
 	}
 	switch trigger["kind"] {
 	case "on":
-		events := arrayAny(trigger["events"])
-		if len(events) == 0 {
+		events := []any{}
+		if rawEvents, hasEvents := trigger["events"]; hasEvents {
+			events = arrayAny(rawEvents)
+		} else {
 			events = []any{trigger["event"]}
 		}
 		names := make([]string, 0, len(events))
@@ -3277,7 +3484,11 @@ func (r *runner) transitionEventNames(transitionIR anyMap, scope string) ([]stri
 		if name == "" {
 			return nil, nil
 		}
-		return []string{"@call:" + name}, nil
+		operationName := r.operationNameInScopePath(scope, name)
+		if operationName == "" {
+			operationName = path.Join(rootPath(scope), name)
+		}
+		return []string{operationName}, nil
 	case "on_set":
 		name, _ := trigger["attribute"].(string)
 		if name == "" {
@@ -3308,10 +3519,7 @@ func (r *runner) buildWhenTrigger(trigger anyMap, ownerPath, scope string) (hsm.
 	if attr, ok := trigger["attribute"].(string); ok && attr != "" {
 		eventName := r.attrNameInScope(scope, attr)
 		r.traceSetAttrs[eventName] = true
-		return hsm.OnSet(eventName), []string{eventName}, func(ctx context.Context, sm *confInstance, _ hsm.Event) bool {
-			value, _ := hsm.Get(ctx, sm, eventName)
-			return truthy(value)
-		}, nil
+		return hsm.OnSet(localBuilderName(eventName)), []string{eventName}, nil, nil
 	}
 	if behavior, ok := trigger["behavior"].(string); ok && behavior != "" {
 		eventNames := r.visibleAttrEventNames(scope)
@@ -3321,7 +3529,7 @@ func (r *runner) buildWhenTrigger(trigger anyMap, ownerPath, scope string) (hsm.
 		parts := make([]hsm.RedefinableElement, 0, len(eventNames))
 		for _, eventName := range eventNames {
 			r.traceSetAttrs[eventName] = true
-			parts = append(parts, hsm.OnSet(eventName))
+			parts = append(parts, hsm.OnSet(localBuilderName(eventName)))
 		}
 		return combineRedefinable(parts), eventNames, func(ctx context.Context, sm *confInstance, event hsm.Event) bool {
 			ctx = withBehaviorScope(ctx, scope)
@@ -3339,9 +3547,10 @@ func (r *runner) buildWhenTrigger(trigger anyMap, ownerPath, scope string) (hsm.
 func (r *runner) visibleAttrEventNames(scope string) []string {
 	seen := map[string]bool{}
 	eventNames := []string{}
+	root := rootPath(scope)
 	for current := scope; current != "" && current != "." && current != "/"; {
 		for _, attr := range r.scopedAttrs[current] {
-			eventName := path.Join(current, attr)
+			eventName := path.Join(root, attr)
 			if !seen[eventName] {
 				seen[eventName] = true
 				eventNames = append(eventNames, eventName)
@@ -3376,7 +3585,8 @@ func (r *runner) timerSource(kindName string, trigger anyMap, scope string) (tim
 	if raw, ok := trigger["duration_ms"]; ok {
 		duration := durationMillis(raw)
 		return timerSource{
-			duration: func(context.Context, hsm.Instance, hsm.Event) time.Duration {
+			duration: func(_ context.Context, _ hsm.Instance, event hsm.Event) time.Duration {
+				r.noteTimerName(event.Name)
 				r.noteTimerScheduled(kindName)
 				return positiveTimerDuration(duration)
 			},
@@ -3385,7 +3595,8 @@ func (r *runner) timerSource(kindName string, trigger anyMap, scope string) (tim
 	if raw, ok := trigger["time_ms"]; ok {
 		target := durationMillis(raw)
 		return timerSource{
-			timepoint: func(context.Context, hsm.Instance, hsm.Event) time.Time {
+			timepoint: func(_ context.Context, _ hsm.Instance, event hsm.Event) time.Time {
+				r.noteTimerName(event.Name)
 				r.noteTimerScheduled(kindName)
 				remaining := target - r.clock.now
 				return time.Now().Add(positiveTimerDuration(remaining))
@@ -3393,33 +3604,14 @@ func (r *runner) timerSource(kindName string, trigger anyMap, scope string) (tim
 		}, nil
 	}
 	if attr, ok := trigger["attribute"].(string); ok {
-		attrName := attr
-		if scope != "" {
-			attrName = path.Join(scope, attr)
-		}
+		attrName := r.attrNameInScope(scope, attr)
 		r.traceSetAttrs[attrName] = true
 		return timerSource{
-			duration: func(ctx context.Context, sm hsm.Instance, _ hsm.Event) time.Duration {
-				r.noteTimerScheduled(kindName)
-				value, _ := hsm.Get(ctx, sm, attrName)
-				duration, err := timerValueDuration(value)
-				if err != nil {
-					conformanceErr := conformanceError{code: "timer_error", message: err.Error()}
-					r.recordExpectedError(conformanceErr)
-					panic(conformanceErr)
-				}
-				return positiveTimerDuration(duration)
+			duration: func(ctx context.Context, sm hsm.Instance, event hsm.Event) time.Duration {
+				return r.timerDurationFromAttribute(ctx, sm, event, attrName, kindName)
 			},
-			timepoint: func(ctx context.Context, sm hsm.Instance, _ hsm.Event) time.Time {
-				r.noteTimerScheduled(kindName)
-				value, _ := hsm.Get(ctx, sm, attrName)
-				duration, err := timerValueDuration(value)
-				if err != nil {
-					conformanceErr := conformanceError{code: "timer_error", message: err.Error()}
-					r.recordExpectedError(conformanceErr)
-					panic(conformanceErr)
-				}
-				return time.Now().Add(positiveTimerDuration(duration))
+			timepoint: func(ctx context.Context, sm hsm.Instance, event hsm.Event) time.Time {
+				return time.Now().Add(r.timerDurationFromAttribute(ctx, sm, event, attrName, kindName))
 			},
 		}, nil
 	}
@@ -3427,48 +3619,45 @@ func (r *runner) timerSource(kindName string, trigger anyMap, scope string) (tim
 		traceSchedule := r.behaviorIsSilentTimerSource(behavior)
 		return timerSource{
 			duration: func(ctx context.Context, sm hsm.Instance, event hsm.Event) time.Duration {
-				ctx = withBehaviorScope(ctx, scope)
-				value, err := r.executeBehavior(ctx, sm.(*confInstance), event, behavior, "timer")
-				if err != nil {
-					r.recordExpectedError(err)
-					panic(err)
-				}
-				duration, err := timerValueDuration(value)
-				if err != nil {
-					conformanceErr := conformanceError{code: "timer_error", message: err.Error()}
-					r.recordExpectedError(conformanceErr)
-					panic(conformanceErr)
-				}
-				if traceSchedule {
-					r.noteTimerScheduled(kindName)
-				} else {
-					r.noteTimerKind(kindName)
-				}
-				return positiveTimerDuration(duration)
+				return r.timerDurationFromBehavior(ctx, sm, event, behavior, scope, kindName, traceSchedule)
 			},
 			timepoint: func(ctx context.Context, sm hsm.Instance, event hsm.Event) time.Time {
-				ctx = withBehaviorScope(ctx, scope)
-				value, err := r.executeBehavior(ctx, sm.(*confInstance), event, behavior, "timer")
-				if err != nil {
-					r.recordExpectedError(err)
-					panic(err)
-				}
-				duration, err := timerValueDuration(value)
-				if err != nil {
-					conformanceErr := conformanceError{code: "timer_error", message: err.Error()}
-					r.recordExpectedError(conformanceErr)
-					panic(conformanceErr)
-				}
-				if traceSchedule {
-					r.noteTimerScheduled(kindName)
-				} else {
-					r.noteTimerKind(kindName)
-				}
-				return time.Now().Add(positiveTimerDuration(duration))
+				return time.Now().Add(r.timerDurationFromBehavior(ctx, sm, event, behavior, scope, kindName, traceSchedule))
 			},
 		}, nil
 	}
 	return timerSource{}, fmt.Errorf("%s trigger requires timer source", kindName)
+}
+
+func (r *runner) timerDurationFromAttribute(ctx context.Context, sm hsm.Instance, event hsm.Event, attrName, kindName string) time.Duration {
+	value, _ := hsm.Get(ctx, sm, attrName)
+	return r.positiveTimerDurationFromValue(value, event, kindName, true)
+}
+
+func (r *runner) timerDurationFromBehavior(ctx context.Context, sm hsm.Instance, event hsm.Event, behavior, scope, kindName string, traceSchedule bool) time.Duration {
+	ctx = withBehaviorScope(ctx, scope)
+	value, err := r.executeBehavior(ctx, sm.(*confInstance), event, behavior, "timer")
+	if err != nil {
+		r.recordExpectedError(err)
+		panic(err)
+	}
+	return r.positiveTimerDurationFromValue(value, event, kindName, traceSchedule)
+}
+
+func (r *runner) positiveTimerDurationFromValue(value any, event hsm.Event, kindName string, traceSchedule bool) time.Duration {
+	duration, err := timerValueDuration(value)
+	if err != nil {
+		conformanceErr := conformanceError{code: "timer_error", message: err.Error()}
+		r.recordExpectedError(conformanceErr)
+		panic(conformanceErr)
+	}
+	r.noteTimerName(event.Name)
+	if traceSchedule {
+		r.noteTimerScheduled(kindName)
+	} else {
+		r.noteTimerKind(kindName)
+	}
+	return positiveTimerDuration(duration)
 }
 
 func (r *runner) noteTimerScheduled(kindName string) {
@@ -3482,6 +3671,38 @@ func (r *runner) noteTimerKind(kindName string) {
 	r.timerMu.Lock()
 	defer r.timerMu.Unlock()
 	r.noteTimerKindLocked(kindName)
+}
+
+func (r *runner) noteTimerName(eventName string) {
+	if eventName == "" {
+		return
+	}
+	r.timerMu.Lock()
+	defer r.timerMu.Unlock()
+	if gid := currentGoroutineID(); gid != 0 {
+		r.pendingTimerNamesByG[gid] = append(r.pendingTimerNamesByG[gid], eventName)
+	}
+}
+
+func (r *runner) nextTimerName() string {
+	r.timerMu.Lock()
+	defer r.timerMu.Unlock()
+	gid := currentGoroutineID()
+	if gid == 0 {
+		return ""
+	}
+	names := r.pendingTimerNamesByG[gid]
+	if len(names) == 0 {
+		return ""
+	}
+	name := names[0]
+	names = names[1:]
+	if len(names) == 0 {
+		delete(r.pendingTimerNamesByG, gid)
+	} else {
+		r.pendingTimerNamesByG[gid] = names
+	}
+	return name
 }
 
 func (r *runner) noteTimerKindLocked(kindName string) {
@@ -3547,6 +3768,10 @@ func (r *runner) removeGoroutineTimerKindLocked(kindName string) {
 	}
 }
 
+// currentGoroutineID is isolated to the conformance runner's fake-clock
+// correlation path. The production runtime does not depend on goroutine IDs;
+// this lets the runner pair a timer source callback with the immediately
+// following clock timer creation when multiple timer sources are active.
 func currentGoroutineID() uint64 {
 	var buf [64]byte
 	n := runtime.Stack(buf[:], false)
@@ -3648,7 +3873,7 @@ func (r *runner) insertTrace(index int, event anyMap) {
 	r.trace[index] = event
 }
 
-func (r *runner) buildInstances(defaultModel *hsm.Model) error {
+func (r *runner) buildInstances(defaultModel *hsm.FinalizedModel) error {
 	if len(r.caseData.Instances) == 0 {
 		r.instances["default"] = hsm.New(&confInstance{}, defaultModel, hsm.Config{ID: "default", Clock: r.clock.Clock()})
 		r.instanceOrder = append(r.instanceOrder, "default")
@@ -3722,13 +3947,13 @@ func (r *runner) buildInstances(defaultModel *hsm.Model) error {
 func (r *runner) configQueue(name, instanceID string) (hsm.Queue, error) {
 	switch name {
 	case "trace_fifo":
-		return r.traceQueue(instanceID, false, nil), nil
+		return r.traceQueue(instanceID, false, nil, nil), nil
 	case "trace_lifo":
-		return r.traceQueue(instanceID, true, nil), nil
+		return r.traceQueue(instanceID, true, nil, nil), nil
 	case "len_seven":
 		return r.traceQueue(instanceID, false, func(context.Context) (int, error) {
 			return 7, nil
-		}), nil
+		}, nil), nil
 	case "push_error":
 		return r.pushErrorQueue(instanceID), nil
 	case "pop_error_once":
@@ -3744,11 +3969,15 @@ func (r *runner) traceEventName(event hsm.Event) string {
 	if strings.HasPrefix(event.Name, "@call:/") {
 		return "@call:" + path.Base(event.Name)
 	}
-	if event.Kind != hsm.TimeEventKind {
-		return event.Name
-	}
 	if name, ok := r.canonicalTimerEventName(event.Name); ok {
 		return name
+	}
+	if name := r.timerEventNameForRuntimeEvent(event.Name); name != "" {
+		r.bindTimerEventName(event.Name, name)
+		return name
+	}
+	if event.Kind != hsm.TimeEventKind {
+		return event.Name
 	}
 	r.recordError(conformanceError{code: "timer_binding_error", message: "unbound runtime timer event " + event.Name})
 	return event.Name
@@ -3770,7 +3999,7 @@ func (r *runner) timerRuntimeNameBound(eventName string) bool {
 	return ok
 }
 
-func (r *runner) bindModelTimerEventNames(model *hsm.Model) {
+func (r *runner) bindModelTimerEventNames(model *hsm.FinalizedModel) {
 	if model == nil {
 		return
 	}
@@ -3782,57 +4011,25 @@ func (r *runner) bindModelTimerEventNames(model *hsm.Model) {
 		eventName      string
 	}
 	pendingByOwner := map[string][]pendingTimerBinding{}
-	modelValue := reflect.ValueOf(model)
-	if modelValue.Kind() != reflect.Pointer || modelValue.IsNil() {
-		r.recordError(conformanceError{code: "timer_binding_error", message: "model reflection did not expose timer event bindings"})
-		return
-	}
-	transitionMap := modelValue.Elem().FieldByName("TransitionMap")
-	if !transitionMap.IsValid() || transitionMap.Kind() != reflect.Map {
-		r.recordError(conformanceError{code: "timer_binding_error", message: "model TransitionMap is not readable for timer event binding"})
-		return
-	}
-	iter := transitionMap.MapRange()
-	for iter.Next() {
-		eventMap := iter.Value()
-		if eventMap.Kind() != reflect.Map {
-			r.recordError(conformanceError{code: "timer_binding_error", message: "model TransitionMap event bucket is not a map"})
-			continue
-		}
-		eventIter := eventMap.MapRange()
-		for eventIter.Next() {
-			eventName := eventIter.Key().String()
-			transitions := eventIter.Value()
-			if transitions.Kind() != reflect.Slice {
-				r.recordError(conformanceError{code: "timer_binding_error", message: "model TransitionMap transition bucket is not a slice for " + eventName})
+	for _, transition := range model.TransitionSnapshots() {
+		for _, eventName := range transition.Events {
+			canonical := r.timerEventNameForTransition(transition.Name)
+			if canonical != "" {
+				r.bindTimerEventName(eventName, canonical)
 				continue
 			}
-			for index := 0; index < transitions.Len(); index++ {
-				transition := transitions.Index(index)
-				transitionName := reflectedQualifiedName(transition)
-				canonical := r.timerEventNameForTransition(transitionName)
-				if canonical != "" {
-					r.bindTimerEventName(eventName, canonical)
-					continue
-				}
-				canonical = r.timerEventNameForRuntimeEvent(eventName)
-				if canonical != "" {
-					r.bindTimerEventName(eventName, canonical)
-					continue
-				}
-				if !isRuntimeTimerEventName(eventName) {
-					continue
-				}
-				owner := reflectedStringField(transition, "source")
-				if owner == "" {
-					r.recordError(conformanceError{code: "timer_binding_error", message: "runtime timer event has no reflected transition source: " + eventName})
-					continue
-				}
-				pendingByOwner[owner] = append(pendingByOwner[owner], pendingTimerBinding{
-					transitionName: transitionName,
-					eventName:      eventName,
-				})
+			canonical = r.timerEventNameForRuntimeEvent(eventName)
+			if canonical != "" {
+				r.bindTimerEventName(eventName, canonical)
+				continue
 			}
+			if !isRuntimeTimerEventName(eventName) || len(r.timerEventsByOwner[transition.Source]) == 0 {
+				continue
+			}
+			pendingByOwner[transition.Source] = append(pendingByOwner[transition.Source], pendingTimerBinding{
+				transitionName: transition.Name,
+				eventName:      eventName,
+			})
 		}
 	}
 	for owner, bindings := range pendingByOwner {
@@ -3862,41 +4059,6 @@ func (r *runner) hasIndexedTimerEvents() bool {
 	return false
 }
 
-func reflectedQualifiedName(value reflect.Value) string {
-	if !value.IsValid() {
-		return ""
-	}
-	method := value.MethodByName("QualifiedName")
-	if !method.IsValid() && value.CanInterface() {
-		method = reflect.ValueOf(value.Interface()).MethodByName("QualifiedName")
-	}
-	if !method.IsValid() || method.Type().NumIn() != 0 || method.Type().NumOut() != 1 || method.Type().Out(0).Kind() != reflect.String {
-		return ""
-	}
-	results := method.Call(nil)
-	return results[0].String()
-}
-
-func reflectedStringField(value reflect.Value, fieldName string) string {
-	if !value.IsValid() {
-		return ""
-	}
-	if value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
-		if value.IsNil() {
-			return ""
-		}
-		value = value.Elem()
-	}
-	if value.Kind() != reflect.Struct {
-		return ""
-	}
-	field := value.FieldByName(fieldName)
-	if !field.IsValid() || field.Kind() != reflect.String {
-		return ""
-	}
-	return field.String()
-}
-
 func (r *runner) timerEventNameForTransition(transitionName string) string {
 	if transitionName == "" {
 		return ""
@@ -3915,17 +4077,49 @@ func (r *runner) timerEventNameForRuntimeEvent(eventName string) string {
 	if eventName == "" {
 		return ""
 	}
-	return r.timerEventNameForTransition(path.Dir(path.Dir(eventName)))
+	part := path.Base(eventName)
+	if part == "duration" || part == "timepoint" {
+		if name := r.timerEventNameForTransition(path.Dir(eventName)); name != "" {
+			return name
+		}
+		owner := path.Dir(path.Dir(eventName))
+		return r.singleTimerEventNameByPart(owner, part)
+	}
+	if name := r.timerEventNameForTransition(path.Dir(path.Dir(eventName))); name != "" {
+		return name
+	}
+	owner := path.Dir(path.Dir(path.Dir(eventName)))
+	part = path.Base(path.Dir(eventName))
+	return r.singleTimerEventNameByPart(owner, part)
+}
+
+func (r *runner) singleTimerEventNameByPart(owner, part string) string {
+	matches := []string{}
+	for _, def := range r.timerEventsByOwner[owner] {
+		if timerPartForKind(def.kind) == part {
+			matches = append(matches, def.name)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	return ""
 }
 
 func isRuntimeTimerEventName(eventName string) bool {
 	if eventName == "" {
 		return false
 	}
-	if _, err := strconv.Atoi(path.Base(eventName)); err != nil {
-		return false
+	base := path.Base(eventName)
+	transitionName := ""
+	if base == "duration" || base == "timepoint" {
+		transitionName = path.Base(path.Dir(eventName))
+	} else {
+		if _, err := strconv.Atoi(base); err != nil {
+			return false
+		}
+		transitionName = path.Base(path.Dir(path.Dir(eventName)))
 	}
-	transitionName := path.Base(path.Dir(path.Dir(eventName)))
 	return strings.HasPrefix(transitionName, "transition_")
 }
 
@@ -3984,7 +4178,7 @@ func (r *runner) configTimer(name string, duration time.Duration) *time.Timer {
 	return time.NewTimer(0)
 }
 
-func (r *runner) traceQueue(instanceID string, lifo bool, lenOverride func(context.Context) (int, error)) hsm.Queue {
+func (r *runner) traceQueue(instanceID string, lifo bool, lenOverride func(context.Context) (int, error), prePop func(hsm.Event) error) hsm.Queue {
 	var mutex sync.Mutex
 	events := []hsm.Event{}
 	return hsm.Queue{
@@ -4004,9 +4198,18 @@ func (r *runner) traceQueue(instanceID string, lifo bool, lenOverride func(conte
 			var event hsm.Event
 			if lifo {
 				event = events[len(events)-1]
-				events = events[:len(events)-1]
 			} else {
 				event = events[0]
+			}
+			if prePop != nil {
+				if err := prePop(event); err != nil {
+					mutex.Unlock()
+					return hsm.Event{}, false, err
+				}
+			}
+			if lifo {
+				events = events[:len(events)-1]
+			} else {
 				events = events[1:]
 			}
 			key := queueGateKey{instanceID: instanceID, eventName: event.Name}
@@ -4046,142 +4249,43 @@ func (r *runner) traceQueue(instanceID string, lifo bool, lenOverride func(conte
 }
 
 func (r *runner) pushErrorQueue(instanceID string) hsm.Queue {
-	queue := r.traceQueue(instanceID, false, nil)
+	queue := r.traceQueue(instanceID, false, nil, nil)
 	queue.Push = func(_ context.Context, event hsm.Event) error {
+		err := conformanceError{code: "runtime_error", message: "queue push error"}
 		r.trace = append(r.trace, anyMap{"type": "trace", "value": "queue:push-error:" + event.Name})
-		return fmt.Errorf("queue push error")
+		r.recordExpectedError(err)
+		return err
 	}
 	return queue
 }
 
 func (r *runner) popErrorOnceQueue(instanceID string) hsm.Queue {
-	var mutex sync.Mutex
-	events := []hsm.Event{}
 	failed := false
-	return hsm.Queue{
-		Push: func(_ context.Context, event hsm.Event) error {
-			mutex.Lock()
-			defer mutex.Unlock()
-			r.trace = append(r.trace, anyMap{"type": "trace", "value": "queue:push:" + event.Name})
-			events = append(events, event)
+	return r.traceQueue(instanceID, false, nil, func(hsm.Event) error {
+		if failed {
 			return nil
-		},
-		Pop: func(ctx context.Context) (hsm.Event, bool, error) {
-			mutex.Lock()
-			if len(events) == 0 {
-				mutex.Unlock()
-				return hsm.Event{}, false, nil
-			}
-			if !failed {
-				failed = true
-				r.trace = append(r.trace, anyMap{"type": "trace", "value": "queue:pop-error"})
-				mutex.Unlock()
-				return hsm.Event{}, false, fmt.Errorf("queue pop error")
-			}
-			event := events[0]
-			events = events[1:]
-			key := queueGateKey{instanceID: instanceID, eventName: event.Name}
-			claim := r.queuePopReleases(key)
-			if claim.beforeRelease != nil {
-				mutex.Unlock()
-				select {
-				case <-claim.beforeRelease:
-				case <-ctx.Done():
-					return hsm.Event{}, false, ctx.Err()
-				}
-				mutex.Lock()
-			}
-			r.trace = append(r.trace, anyMap{"type": "trace", "value": "queue:pop:" + event.Name})
-			queuePopSeen(claim)
-			if claim.afterRelease != nil {
-				mutex.Unlock()
-				select {
-				case <-claim.afterRelease:
-				case <-ctx.Done():
-					return hsm.Event{}, false, ctx.Err()
-				}
-				mutex.Lock()
-			}
-			mutex.Unlock()
-			return event, true, nil
-		},
-		Len: func(context.Context) (int, error) {
-			mutex.Lock()
-			defer mutex.Unlock()
-			return len(events), nil
-		},
-	}
+		}
+		failed = true
+		r.trace = append(r.trace, anyMap{"type": "trace", "value": "queue:pop-error"})
+		return fmt.Errorf("queue pop error")
+	})
 }
 
 func (r *runner) lenErrorOnceQueue(instanceID string) hsm.Queue {
-	var mutex sync.Mutex
-	events := []hsm.Event{}
 	lenFailed := false
-	return hsm.Queue{
-		Push: func(_ context.Context, event hsm.Event) error {
-			mutex.Lock()
-			defer mutex.Unlock()
-			r.trace = append(r.trace, anyMap{"type": "trace", "value": "queue:push:" + event.Name})
-			events = append(events, event)
-			return nil
-		},
-		Pop: func(ctx context.Context) (hsm.Event, bool, error) {
-			mutex.Lock()
-			if len(events) == 0 {
-				mutex.Unlock()
-				return hsm.Event{}, false, nil
-			}
-			event := events[0]
-			events = events[1:]
-			key := queueGateKey{instanceID: instanceID, eventName: event.Name}
-			claim := r.queuePopReleases(key)
-			if claim.beforeRelease != nil {
-				mutex.Unlock()
-				select {
-				case <-claim.beforeRelease:
-				case <-ctx.Done():
-					return hsm.Event{}, false, ctx.Err()
-				}
-				mutex.Lock()
-			}
-			r.trace = append(r.trace, anyMap{"type": "trace", "value": "queue:pop:" + event.Name})
-			queuePopSeen(claim)
-			if claim.afterRelease != nil {
-				mutex.Unlock()
-				select {
-				case <-claim.afterRelease:
-				case <-ctx.Done():
-					return hsm.Event{}, false, ctx.Err()
-				}
-				mutex.Lock()
-			}
-			mutex.Unlock()
-			return event, true, nil
-		},
-		Len: func(context.Context) (int, error) {
-			mutex.Lock()
-			defer mutex.Unlock()
-			if !lenFailed {
-				lenFailed = true
-				r.trace = append(r.trace, anyMap{"type": "trace", "value": "queue:len-error"})
-				return 0, fmt.Errorf("queue len error")
-			}
-			return len(events), nil
-		},
-	}
+	return r.traceQueue(instanceID, false, func(context.Context) (int, error) {
+		if !lenFailed {
+			lenFailed = true
+			r.trace = append(r.trace, anyMap{"type": "trace", "value": "queue:len-error"})
+			return 0, fmt.Errorf("queue len error")
+		}
+		return 0, nil
+	}, nil)
 }
 
 func (r *runner) buildGroups() error {
-	groupIDs := map[string]bool{}
-	for _, groupIR := range r.caseData.Groups {
-		id, err := requireString(groupIR, "id")
-		if err != nil {
-			return err
-		}
-		if groupIDs[id] {
-			return fmt.Errorf("duplicate_group: %q", id)
-		}
-		groupIDs[id] = true
+	if err := r.requireUniqueGroupIDs(); err != nil {
+		return err
 	}
 	for _, groupIR := range r.caseData.Groups {
 		id, err := requireString(groupIR, "id")
@@ -4220,32 +4324,44 @@ func (r *runner) buildGroups() error {
 	return nil
 }
 
-func (r *runner) dispatchAll(ctx context.Context, event hsm.Event, sequential bool) <-chan struct{} {
-	return r.dispatchInstances(ctx, event, r.instanceOrder, sequential)
-}
-
-func (r *runner) dispatchGroup(ctx context.Context, event hsm.Event, groupID string, sequential bool) (<-chan struct{}, *conformanceError) {
-	memberIDs := r.groupMembers[groupID]
-	started := 0
-	for _, id := range memberIDs {
-		if !r.started[id] {
-			continue
+func (r *runner) requireUniqueGroupIDs() error {
+	groupIDs := map[string]bool{}
+	for _, groupIR := range r.caseData.Groups {
+		id, err := requireString(groupIR, "id")
+		if err != nil {
+			return err
 		}
-		started++
+		if groupIDs[id] {
+			return fmt.Errorf("duplicate_group: %q", id)
+		}
+		groupIDs[id] = true
 	}
-	if started == 0 {
+	return nil
+}
+
+func (r *runner) dispatchAll(ctx context.Context, event hsm.Event, sequential bool, current *confInstance) <-chan struct{} {
+	return r.dispatchInstances(ctx, event, r.instanceOrder, sequential, current)
+}
+
+func (r *runner) dispatchGroup(ctx context.Context, event hsm.Event, groupID string, sequential bool, current *confInstance) (<-chan struct{}, *conformanceError) {
+	memberIDs := r.groupMembers[groupID]
+	if !sequential {
 		done := make(chan struct{})
-		close(done)
-		return done, &conformanceError{code: "lifecycle_error", message: "operation requires a started HSM"}
+		go func() {
+			defer close(done)
+			runtimeYield()
+			<-r.dispatchInstances(ctx, event, memberIDs, true, current)
+		}()
+		return done, nil
 	}
-	return r.dispatchInstances(ctx, event, memberIDs, sequential), nil
+	return r.dispatchInstances(ctx, event, memberIDs, sequential, current), nil
 }
 
-func (r *runner) dispatchTo(ctx context.Context, event hsm.Event, ids []string, sequential bool) <-chan struct{} {
-	return r.dispatchInstances(ctx, event, ids, sequential)
+func (r *runner) dispatchTo(ctx context.Context, event hsm.Event, ids []string, sequential bool, current *confInstance) <-chan struct{} {
+	return r.dispatchInstances(ctx, event, ids, sequential, current)
 }
 
-func (r *runner) dispatchInstances(ctx context.Context, event hsm.Event, ids []string, wait bool) <-chan struct{} {
+func (r *runner) dispatchInstances(ctx context.Context, event hsm.Event, ids []string, wait bool, current *confInstance) <-chan struct{} {
 	if ctx == nil {
 		ctx = r.ctx
 	}
@@ -4257,14 +4373,25 @@ func (r *runner) dispatchInstances(ctx context.Context, event hsm.Event, ids []s
 	}
 	done := make(chan struct{})
 	targets := r.activeDispatchTargets(ids)
+	orderedTargets := make([]string, 0, len(targets))
+	for _, id := range targets {
+		if current != nil && r.instances[id] == current {
+			continue
+		}
+		orderedTargets = append(orderedTargets, id)
+	}
+	for _, id := range targets {
+		if current != nil && r.instances[id] == current {
+			orderedTargets = append(orderedTargets, id)
+		}
+	}
 	if wait && r.allTargetsUseConfiguredQueue(targets) {
-		signals := make([]<-chan struct{}, 0, len(targets))
 		gate := r.beginQueueFanoutGate(targets, event.Name)
 		for i, id := range targets {
 			instance := r.instances[id]
+			targetedEvent := r.eventForDispatchTarget(event, id, current)
 			r.clearEventMemory(instance, event.Name)
-			signal := hsm.Dispatch(ctx, instance, cloneRunnerEvent(event))
-			signals = append(signals, signal)
+			signal := hsm.Dispatch(ctx, instance, targetedEvent)
 			close(gate.entries[i].beforeRelease)
 			if err := r.waitQueuePop(gate, queueGateKey{instanceID: id, eventName: event.Name}, ctx); err != nil {
 				r.recordError(err)
@@ -4272,47 +4399,66 @@ func (r *runner) dispatchInstances(ctx context.Context, event hsm.Event, ids []s
 				close(done)
 				return done
 			}
-		}
-		go func() {
-			defer close(done)
-			if err := r.releaseQueueGateAfterPop(gate, signals, ctx); err != nil {
-				r.recordError(err)
+			close(gate.entries[i].afterRelease)
+			select {
+			case <-signal:
+			case <-ctx.Done():
+				r.recordError(conformanceError{code: "runtime_wait_cancelled", message: "queue dispatch " + id + " " + event.Name})
+				r.endQueueFanoutGate(gate)
+				close(done)
+				return done
 			}
-			r.endQueueFanoutGate(gate)
-		}()
+		}
+		r.endQueueFanoutGate(gate)
+		close(done)
 		return done
 	}
-	if !wait && r.targetsUseConfiguredQueue(targets) {
-		queuedTargets := r.configuredQueueTargets(targets)
-		queuedSignals := make([]<-chan struct{}, 0, len(queuedTargets))
-		gate := r.beginQueueFanoutGate(queuedTargets, event.Name)
-		for _, id := range targets {
+	if !wait {
+		defer close(done)
+		for _, id := range orderedTargets {
 			instance := r.instances[id]
+			targetedEvent := r.eventForDispatchTarget(event, id, current)
 			r.clearEventMemory(instance, event.Name)
-			signal := hsm.Dispatch(ctx, instance, cloneRunnerEvent(event))
+			if current != nil && instance == current {
+				_ = hsm.Dispatch(ctx, instance, targetedEvent)
+				continue
+			}
 			if r.instanceQueues[id] != "" {
-				queuedSignals = append(queuedSignals, signal)
+				gate := r.beginQueueFanoutGate([]string{id}, event.Name)
+				signal := hsm.Dispatch(ctx, instance, targetedEvent)
+				close(gate.entries[0].beforeRelease)
+				if err := r.waitQueuePop(gate, queueGateKey{instanceID: id, eventName: event.Name}, ctx); err != nil {
+					r.recordError(err)
+					r.endQueueFanoutGate(gate)
+					return done
+				}
+				close(gate.entries[0].afterRelease)
+				select {
+				case <-signal:
+				case <-ctx.Done():
+					r.recordError(conformanceError{code: "runtime_wait_cancelled", message: "queue dispatch " + id + " " + event.Name})
+				}
+				r.endQueueFanoutGate(gate)
+				continue
+			}
+			signal := hsm.Dispatch(ctx, instance, targetedEvent)
+			select {
+			case <-signal:
+			case <-ctx.Done():
+				r.recordError(conformanceError{code: "runtime_wait_cancelled", message: "dispatch " + event.Name})
+				return done
 			}
 		}
-		drained := make(chan struct{})
-		go func() {
-			defer close(drained)
-			if err := r.releaseQueueGateSequential(gate, queuedSignals, ctx); err != nil {
-				r.recordError(err)
-			}
-			r.endQueueFanoutGate(gate)
-		}()
-		r.addPendingWork(drained)
-		close(done)
 		return done
 	}
 	go func() {
 		defer close(done)
 		for _, id := range targets {
 			instance := r.instances[id]
+			targetedEvent := r.eventForDispatchTarget(event, id, current)
 			r.clearEventMemory(instance, event.Name)
 			select {
-			case <-hsm.Dispatch(ctx, instance, cloneRunnerEvent(event)):
+			case <-hsm.Dispatch(ctx, instance, targetedEvent):
 			case <-ctx.Done():
 				r.recordError(conformanceError{code: "runtime_wait_cancelled", message: "dispatch " + event.Name})
 				return
@@ -4320,6 +4466,26 @@ func (r *runner) dispatchInstances(ctx context.Context, event hsm.Event, ids []s
 		}
 	}()
 	return done
+}
+
+func (r *runner) eventForDispatchTarget(event hsm.Event, targetID string, current *confInstance) hsm.Event {
+	targeted := event
+	if targeted.Source == "" && current != nil {
+		targeted.Source = r.instanceIDFor(current)
+	}
+	if targeted.Target == "" {
+		targeted.Target = targetID
+	}
+	return targeted
+}
+
+func (r *runner) instanceIDFor(instance *confInstance) string {
+	for id, candidate := range r.instances {
+		if candidate == instance {
+			return id
+		}
+	}
+	return ""
 }
 
 func (r *runner) addPendingWork(done <-chan struct{}) {
@@ -4465,13 +4631,8 @@ func (r *runner) releaseQueueGateSequential(gate *queueFanoutGate, signals []<-c
 			return err
 		}
 		close(gate.entries[i].afterRelease)
-		if i >= len(signals) || signals[i] == nil {
-			continue
-		}
-		select {
-		case <-signals[i]:
-		case <-ctx.Done():
-			return conformanceError{code: "runtime_wait_cancelled", message: "queue dispatch " + gate.entries[i].key.instanceID + " " + gate.entries[i].key.eventName}
+		if err := waitQueueDispatchSignal(signals, i, gate.entries[i].key, ctx); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -4507,45 +4668,59 @@ func (r *runner) releaseQueueGateAfterPop(gate *queueFanoutGate, signals []<-cha
 	}
 	for i := range gate.entries {
 		close(gate.entries[i].afterRelease)
-		if i >= len(signals) || signals[i] == nil {
-			continue
-		}
-		select {
-		case <-signals[i]:
-		case <-ctx.Done():
-			return conformanceError{code: "runtime_wait_cancelled", message: "queue dispatch " + gate.entries[i].key.instanceID + " " + gate.entries[i].key.eventName}
+		if err := waitQueueDispatchSignal(signals, i, gate.entries[i].key, ctx); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func cloneRunnerEvent(event hsm.Event) hsm.Event {
-	event.Data = normalizeJSONValue(event.Data)
-	event.Schema = normalizeJSONValue(event.Schema)
-	return event
+func waitQueueDispatchSignal(signals []<-chan struct{}, index int, key queueGateKey, ctx context.Context) error {
+	if index >= len(signals) || signals[index] == nil {
+		return nil
+	}
+	select {
+	case <-signals[index]:
+		return nil
+	case <-ctx.Done():
+		return conformanceError{code: "runtime_wait_cancelled", message: "queue dispatch " + key.instanceID + " " + key.eventName}
+	}
 }
 
 func (r *runner) traceDeferredDispatch(instance *confInstance, eventName string) bool {
-	if instance == nil || eventName == "" || !containsString(r.caseData.Features, "defer") {
+	if instance == nil || eventName == "" || !r.traceContractIncludes("defer") {
 		return false
 	}
 	return r.traceDeferredDispatchAtState(instance, eventName, instance.State())
 }
 
 func (r *runner) traceDeferredDispatchAtState(instance *confInstance, eventName, statePath string) bool {
-	if instance == nil || eventName == "" || statePath == "" || !containsString(r.caseData.Features, "defer") {
+	if instance == nil || eventName == "" || statePath == "" || !r.traceContractIncludes("defer") {
 		return false
 	}
-	deferred := r.eventIsDeferredAtState(statePath, eventName)
-	if !deferred || r.statePathHasEventTransition(statePath, eventName) {
+	deferred := r.eventWouldDeferAtState(statePath, eventName)
+	if !deferred {
 		return deferred
 	}
 	if r.hasDeferredEvent(instance, eventName) {
 		return true
 	}
 	r.trace = append(r.trace, anyMap{"type": "defer", "event": eventName})
-	r.pendingDeferred = append(r.pendingDeferred, deferredEvent{instanceID: r.instanceIDForInstance(instance), eventName: eventName})
+	r.pendingDeferred = append(r.pendingDeferred, deferredEvent{
+		instanceID: r.instanceIDForInstance(instance),
+		eventName:  eventName,
+		owner:      r.deferOwnerAtState(statePath, eventName),
+	})
 	return true
+}
+
+func (r *runner) deferOwnerAtState(state, eventName string) string {
+	if !r.eventWouldDeferAtState(state, eventName) {
+		return ""
+	}
+	return walkStateAncestors(state, func(current string) bool {
+		return r.deferEvents[current][eventName]
+	})
 }
 
 func (r *runner) eventIsDeferred(instance *confInstance, eventName string) bool {
@@ -4553,28 +4728,30 @@ func (r *runner) eventIsDeferred(instance *confInstance, eventName string) bool 
 }
 
 func (r *runner) eventIsDeferredAtState(state, eventName string) bool {
-	for current := state; current != "" && current != "." && current != "/"; {
-		if r.deferEvents[current][eventName] {
-			return true
-		}
-		next := path.Dir(current)
-		if next == current {
-			break
-		}
-		current = next
-	}
-	return false
+	return walkStateAncestors(state, func(current string) bool {
+		return r.deferEvents[current][eventName]
+	}) != ""
 }
 
-func (r *runner) traceDeferredReplay(instance *confInstance) {
-	eventName, ok := r.popDeferredEvent(instance)
+func (r *runner) eventWouldDeferAtState(state, eventName string) bool {
+	return r.eventIsDeferredAtState(state, eventName) && !r.statePathHasUnguardedEventTransition(state, eventName)
+}
+
+func (r *runner) traceDeferredReplay(instance *confInstance, eventName string) {
+	if !r.traceContractIncludes("undefer") {
+		return
+	}
+	deferredEventName, ok := r.popDeferredEventForSource(instance, r.eventTransitionSourceAtState(instance.State(), eventName))
 	if ok {
-		r.trace = append(r.trace, anyMap{"type": "undefer", "event": eventName})
+		r.trace = append(r.trace, anyMap{"type": "undefer", "event": deferredEventName})
 		r.deferReplayBarrier = true
 	}
 }
 
 func (r *runner) traceDeferredReplayFromBehavior(instance *confInstance) {
+	if !r.traceContractIncludes("undefer") {
+		return
+	}
 	eventName, ok := r.popDeferredEvent(instance)
 	if ok {
 		r.trace = append(r.trace, anyMap{"type": "undefer", "event": eventName})
@@ -4602,6 +4779,35 @@ func (r *runner) popDeferredEvent(instance *confInstance) (string, bool) {
 	return "", false
 }
 
+func (r *runner) popDeferredEventForSource(instance *confInstance, source string) (string, bool) {
+	instanceID := r.instanceIDForInstance(instance)
+	for index := 0; index < len(r.pendingDeferred); index++ {
+		deferred := r.pendingDeferred[index]
+		if deferred.instanceID != instanceID {
+			continue
+		}
+		if source != "" && !r.deferredEventReplaysFromSource(deferred, source) {
+			r.pendingDeferred = append(r.pendingDeferred[:index], r.pendingDeferred[index+1:]...)
+			index--
+			continue
+		}
+		r.pendingDeferred = append(r.pendingDeferred[:index], r.pendingDeferred[index+1:]...)
+		return deferred.eventName, true
+	}
+	return "", false
+}
+
+func (r *runner) deferredEventReplaysFromSource(deferred deferredEvent, source string) bool {
+	if deferred.owner == "" || source == "" {
+		return true
+	}
+	boundary := path.Dir(deferred.owner)
+	if boundary == "" || boundary == "." || boundary == "/" || boundary == rootPath(deferred.owner) {
+		return true
+	}
+	return source != boundary && hsm.IsAncestor(boundary, source)
+}
+
 func (r *runner) instanceIDForInstance(target *confInstance) string {
 	for id, instance := range r.instances {
 		if instance == target {
@@ -4618,28 +4824,52 @@ func (r *runner) currentStateHasEventTransition(instance *confInstance, eventNam
 	return r.statePathHasEventTransition(instance.State(), eventName)
 }
 
+func (r *runner) eventTransitionSourceAtState(statePath, eventName string) string {
+	return walkStateAncestors(statePath, func(current string) bool {
+		return r.statePathHasEventTransition(current, eventName)
+	})
+}
+
 func (r *runner) statePathHasEventTransition(statePath, eventName string) bool {
+	return r.statePathHasEventTransitionWhere(statePath, eventName, nil)
+}
+
+func (r *runner) statePathHasUnguardedEventTransition(statePath, eventName string) bool {
+	return r.statePathHasEventTransitionWhere(statePath, eventName, func(transition anyMap) bool {
+		return transition["guard"] == nil
+	})
+}
+
+func (r *runner) statePathHasGuardedEventTransition(statePath, eventName string) bool {
+	return r.statePathHasEventTransitionWhere(statePath, eventName, func(transition anyMap) bool {
+		return transition["guard"] != nil
+	})
+}
+
+func (r *runner) statePathHasEventTransitionWhere(statePath, eventName string, predicate func(anyMap) bool) bool {
 	stateIR := r.stateIRForPath(statePath)
 	if stateIR == nil {
 		return false
 	}
 	for _, transitionAny := range arrayAny(stateIR["transitions"]) {
 		transition := object(transitionAny)
-		if transition == nil {
+		if transition == nil || (predicate != nil && !predicate(transition)) {
 			continue
 		}
 		_, targetRoot := r.snapshotRoots(statePath)
-		names, err := r.transitionEventNames(transition, targetRoot)
-		if err != nil {
-			continue
-		}
-		for _, name := range names {
-			if name == eventName {
-				return true
-			}
+		if r.transitionHandlesEvent(transition, targetRoot, eventName) {
+			return true
 		}
 	}
 	return false
+}
+
+func (r *runner) transitionHandlesEvent(transition anyMap, targetRoot, eventName string) bool {
+	names, err := r.transitionEventNames(transition, targetRoot)
+	if err != nil {
+		return false
+	}
+	return containsString(names, eventName)
 }
 
 func (r *runner) exitingTimerState(instance *confInstance, eventName string) bool {
@@ -4656,6 +4886,9 @@ func (r *runner) exitingTimerState(instance *confInstance, eventName string) boo
 		if stateHasTargetEventTransition(stateIR, eventName) {
 			hasEventTransition = true
 		}
+	}
+	if !hasEventTransition && r.modelHasTargetEventTransitionFromState(instance.State(), eventName) {
+		hasEventTransition = true
 	}
 	return hasTimer && hasEventTransition
 }
@@ -4727,6 +4960,32 @@ func stateHasTargetEventTransition(stateIR anyMap, eventName string) bool {
 			if err == nil && name == eventName {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func (r *runner) modelHasTargetEventTransitionFromState(statePath, eventName string) bool {
+	modelIR := r.modelIRForPath(statePath)
+	if modelIR == nil {
+		return false
+	}
+	sourceRoot, targetRoot := r.snapshotRoots(statePath)
+	for _, transitionAny := range arrayAny(modelIR["transitions"]) {
+		transition := object(transitionAny)
+		if transition == nil || transition["target"] == nil {
+			continue
+		}
+		source, err := requireStringValue(transition["source"])
+		if err != nil {
+			continue
+		}
+		sourcePath := resolvePathInScope(source, targetRoot, false, sourceRoot, targetRoot)
+		if sourcePath != statePath && !hsm.IsAncestor(sourcePath, statePath) {
+			continue
+		}
+		if r.transitionHandlesEvent(transition, targetRoot, eventName) {
+			return true
 		}
 	}
 	return false
@@ -4849,6 +5108,21 @@ func (r *runner) attrSpecForName(name string) (attrSpec, bool) {
 	return attrSpec{}, false
 }
 
+func (r *runner) attributeBuilder(name string, spec anyMap) hsm.RedefinableElement {
+	typ := hsmAttributeType(spec["type"])
+	if value, ok := spec["default"]; ok {
+		defaultValue := r.runtimeAttrValue(name, normalizeJSONValue(value))
+		if typ != nil {
+			return hsm.Attribute(name, typ, defaultValue)
+		}
+		return hsm.Attribute(name, defaultValue)
+	}
+	if typ != nil {
+		return hsm.Attribute(name, typ)
+	}
+	return hsm.Attribute(name)
+}
+
 func (r *runner) runtimeAttrValue(name string, value any) any {
 	spec, ok := r.attrSpecForName(name)
 	if !ok || spec.typ != "any" {
@@ -4858,6 +5132,26 @@ func (r *runner) runtimeAttrValue(name string, value any) any {
 		return value
 	}
 	return dynamicAnyValue{Value: normalizeJSONValue(value)}
+}
+
+func hsmAttributeType(value any) reflect.Type {
+	typ, _ := value.(string)
+	switch typ {
+	case "string":
+		return hsm.AttributeType[string]()
+	case "boolean", "bool":
+		return hsm.AttributeType[bool]()
+	case "number":
+		return hsm.AttributeType[int]()
+	case "array":
+		return hsm.AttributeType[[]any]()
+	case "object":
+		return hsm.AttributeType[anyMap]()
+	case "any", "duration_ms", "time_ms":
+		return hsm.AttributeType[any]()
+	default:
+		return nil
+	}
 }
 
 func (r *runner) executeStep(step op) (err error) {
@@ -4941,12 +5235,20 @@ func (r *runner) executeStep(step op) (err error) {
 			r.recordLifecycleError("operation requires a started HSM")
 			break
 		}
-		if !r.traceDeferredDispatch(instance, event.Name) {
-			r.traceDeferredReplay(instance)
+		statePath := instance.State()
+		eventWillDefer := r.eventWouldDeferAtState(statePath, event.Name)
+		traceDeferAfterDispatch := eventWillDefer && r.statePathHasGuardedEventTransition(statePath, event.Name)
+		if eventWillDefer && !traceDeferAfterDispatch {
+			r.traceDeferredDispatchAtState(instance, event.Name, statePath)
+		} else if !eventWillDefer {
+			r.traceDeferredReplay(instance, event.Name)
 		}
 		r.clearEventMemory(instance, event.Name)
 		if err := r.waitFor(r.ctx, hsm.Dispatch(r.ctx, instance, event), "dispatch"); err != nil {
 			return err
+		}
+		if traceDeferAfterDispatch {
+			r.traceDeferredDispatchAtState(instance, event.Name, statePath)
 		}
 	case "dispatch_all":
 		event, err := eventFromValue(step["event"])
@@ -4956,13 +5258,34 @@ func (r *runner) executeStep(step op) (err error) {
 		r.flushTimerScheduled(-1)
 		r.stableLabel = "all"
 		r.trace = append(r.trace, anyMap{"type": "dispatch", "event": event.Name, "target": "all"})
+		deferredTargets := map[string]string{}
+		activeTargets := 0
 		for _, id := range r.instanceOrder {
 			if instance := r.instances[id]; instance != nil && r.started[id] {
-				r.traceDeferredDispatch(instance, event.Name)
+				activeTargets++
 			}
 		}
-		if err := r.waitFor(r.ctx, r.dispatchAll(r.ctx, event, true), "dispatch_all"); err != nil {
+		for _, id := range r.instanceOrder {
+			if instance := r.instances[id]; instance != nil && r.started[id] {
+				statePath := instance.State()
+				if r.eventWouldDeferAtState(statePath, event.Name) {
+					if r.statePathHasGuardedEventTransition(statePath, event.Name) {
+						deferredTargets[id] = statePath
+					} else {
+						r.traceDeferredDispatchAtState(instance, event.Name, statePath)
+					}
+				} else if activeTargets == 1 {
+					r.traceDeferredReplay(instance, event.Name)
+				}
+			}
+		}
+		if err := r.waitFor(r.ctx, r.dispatchAll(r.ctx, event, true, nil), "dispatch_all"); err != nil {
 			return err
+		}
+		for _, id := range r.instanceOrder {
+			if statePath, ok := deferredTargets[id]; ok {
+				r.traceDeferredDispatchAtState(r.instances[id], event.Name, statePath)
+			}
 		}
 	case "dispatch_to":
 		event, err := eventFromValue(step["event"])
@@ -4982,13 +5305,37 @@ func (r *runner) executeStep(step op) (err error) {
 		}
 		r.flushTimerScheduled(-1)
 		r.trace = append(r.trace, anyMap{"type": "dispatch", "event": event.Name, "target": traceTarget})
+		deferredTargets := map[string]string{}
+		activeTargets := 0
 		for _, target := range targets {
-			if instance := r.instances[target]; instance != nil {
-				r.traceDeferredDispatch(instance, event.Name)
+			if instance := r.instances[target]; instance != nil && r.started[target] {
+				activeTargets++
 			}
 		}
-		if err := r.waitFor(r.ctx, r.dispatchTo(r.ctx, event, targets, true), "dispatch_to"); err != nil {
+		for _, target := range targets {
+			if instance := r.instances[target]; instance != nil && r.started[target] {
+				statePath := instance.State()
+				if r.eventWouldDeferAtState(statePath, event.Name) {
+					if r.statePathHasGuardedEventTransition(statePath, event.Name) {
+						deferredTargets[target] = statePath
+					} else {
+						r.traceDeferredDispatchAtState(instance, event.Name, statePath)
+					}
+				} else if activeTargets == 1 {
+					r.traceDeferredReplay(instance, event.Name)
+				}
+			}
+		}
+		if err := r.waitFor(r.ctx, r.dispatchTo(r.ctx, event, targets, true, nil), "dispatch_to"); err != nil {
 			return err
+		}
+		if len(targets) == 1 && containsString(r.caseData.Features, "redefine") {
+			r.stableLabel = r.stateFor(targets[0])
+		}
+		for _, target := range targets {
+			if statePath, ok := deferredTargets[target]; ok {
+				r.traceDeferredDispatchAtState(r.instances[target], event.Name, statePath)
+			}
 		}
 	case "group_dispatch":
 		event, err := eventFromValue(step["event"])
@@ -5010,12 +5357,28 @@ func (r *runner) executeStep(step op) (err error) {
 			r.recordError(conformanceErr)
 			break
 		}
+		deferredTargets := map[string]string{}
+		activeTargets := 0
 		for _, memberID := range r.groupMembers[groupID] {
-			if instance := r.instances[memberID]; instance != nil {
-				r.traceDeferredDispatch(instance, event.Name)
+			if instance := r.instances[memberID]; instance != nil && r.started[memberID] {
+				activeTargets++
 			}
 		}
-		dispatched, dispatchErr := r.dispatchGroup(r.ctx, event, groupID, true)
+		for _, memberID := range r.groupMembers[groupID] {
+			if instance := r.instances[memberID]; instance != nil && r.started[memberID] {
+				statePath := instance.State()
+				if r.eventWouldDeferAtState(statePath, event.Name) {
+					if r.statePathHasGuardedEventTransition(statePath, event.Name) {
+						deferredTargets[memberID] = statePath
+					} else {
+						r.traceDeferredDispatchAtState(instance, event.Name, statePath)
+					}
+				} else if activeTargets == 1 {
+					r.traceDeferredReplay(instance, event.Name)
+				}
+			}
+		}
+		dispatched, dispatchErr := r.dispatchGroup(r.ctx, event, groupID, true, nil)
 		if dispatchErr != nil {
 			r.trace = append(r.trace, anyMap{"type": "error", "code": dispatchErr.code})
 			r.stableLabel = ""
@@ -5024,6 +5387,11 @@ func (r *runner) executeStep(step op) (err error) {
 		}
 		if err := r.waitFor(r.ctx, dispatched, "group_dispatch"); err != nil {
 			return err
+		}
+		for _, memberID := range r.groupMembers[groupID] {
+			if statePath, ok := deferredTargets[memberID]; ok {
+				r.traceDeferredDispatchAtState(r.instances[memberID], event.Name, statePath)
+			}
 		}
 	case "set":
 		instance, err := r.instanceForStep(step)
@@ -5142,7 +5510,11 @@ func (r *runner) executeStep(step op) (err error) {
 			r.settle()
 		}
 		r.flushTimerScheduled(-1)
-		snapshot := hsm.TakeSnapshot(r.ctx, instance)
+		snapshots := hsm.TakeSnapshots(r.ctx, instance)
+		if len(snapshots) == 0 {
+			return fmt.Errorf("snapshot unavailable for %s", instanceID)
+		}
+		snapshot := snapshots[0]
 		r.snapshots[id] = r.normalizeSnapshot(snapshot)
 		r.trace = append(r.trace, anyMap{"type": "snapshot", "state": snapshot.State})
 		r.stableLabel = ""
@@ -5182,7 +5554,6 @@ func (r *runner) executeStep(step op) (err error) {
 			return err
 		}
 		if !r.started[id] {
-			r.recordLifecycleError("operation requires a started HSM")
 			break
 		}
 		r.flushTimerScheduled(-1)
@@ -5205,8 +5576,9 @@ func (r *runner) executeStep(step op) (err error) {
 			return err
 		}
 		r.flushTimerScheduled(-1)
-		r.clock.Advance(duration)
+		r.clock.Advance(duration, r.deliverLogicalTimer)
 		r.settle()
+		r.flushTimerScheduled(-1)
 	case "expect":
 		return r.assertExpectationObject(object(step["expect"]))
 	default:
@@ -5218,6 +5590,10 @@ func (r *runner) executeStep(step op) (err error) {
 
 func (r *runner) settle() {
 	settled := false
+	minTurns := 1
+	if containsString(r.caseData.Features, "timer") {
+		minTurns = 5
+	}
 	for i := 0; i < 10; i++ {
 		r.drainPendingWork()
 		for _, id := range r.instanceOrder {
@@ -5238,7 +5614,7 @@ func (r *runner) settle() {
 			r.recordError(err)
 			return
 		}
-		if !r.hasPendingWork() {
+		if !r.hasPendingWork() && i+1 >= minTurns {
 			settled = true
 			break
 		}
@@ -5259,9 +5635,6 @@ func (r *runner) hasPendingWork() bool {
 func (r *runner) recordPendingTimerKindError() {
 	r.timerMu.Lock()
 	pending := len(r.pendingTimerKinds)
-	for _, kinds := range r.pendingTimerKindsByG {
-		pending += len(kinds)
-	}
 	if pending == 0 {
 		r.timerMu.Unlock()
 		return
@@ -5296,6 +5669,31 @@ func (i *confInstance) Wait() <-chan struct{} {
 	return hsm.AfterProcess(i.Context(), i)
 }
 
+func (r *runner) deliverLogicalTimer(eventName string, trigger func()) {
+	if trigger == nil {
+		return
+	}
+	waiters := make([]<-chan struct{}, 0, len(r.instanceOrder))
+	for _, id := range r.instanceOrder {
+		if !r.started[id] {
+			continue
+		}
+		instance := r.instances[id]
+		if instance == nil {
+			continue
+		}
+		waiters = append(waiters, hsm.AfterProcess(r.ctx, instance, hsm.Event{Name: eventName}))
+	}
+	trigger()
+	if len(waiters) == 0 {
+		runtimeYield()
+		return
+	}
+	if err := r.waitForAny(r.ctx, waiters, "timer "+eventName); err != nil {
+		r.recordError(err)
+	}
+}
+
 func (r *runner) waitFor(ctx context.Context, done <-chan struct{}, label string) error {
 	if done == nil {
 		return nil
@@ -5312,6 +5710,34 @@ func (r *runner) waitFor(ctx context.Context, done <-chan struct{}, label string
 	case <-ctx.Done():
 		return conformanceError{code: "runtime_wait_cancelled", message: label}
 	}
+}
+
+func (r *runner) waitForAny(ctx context.Context, waiters []<-chan struct{}, label string) error {
+	if len(waiters) == 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = r.ctx
+	}
+	if ctx == nil {
+		return conformanceError{code: "runtime_wait_without_context", message: label}
+	}
+	cases := make([]reflect.SelectCase, 0, len(waiters)+1)
+	for _, waiter := range waiters {
+		if waiter == nil {
+			continue
+		}
+		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(waiter)})
+	}
+	if len(cases) == 0 {
+		return nil
+	}
+	cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())})
+	chosen, _, _ := reflect.Select(cases)
+	if chosen == len(cases)-1 {
+		return conformanceError{code: "runtime_wait_cancelled", message: label}
+	}
+	return nil
 }
 
 func (r *runner) waitSchedulerTurn(ctx context.Context, label string) error {
@@ -5340,10 +5766,6 @@ func (r *runner) executeBehavior(ctx context.Context, sm *confInstance, event hs
 	originalEventName := event.Name
 	var result any
 	for _, op := range program {
-		if role == "activity" && ctx.Err() != nil {
-			r.recordActivityCancel(ctx, behaviorID)
-			return nil, errBehaviorCancelled
-		}
 		value, err := r.executeBehaviorOp(ctx, sm, &event, op, behaviorID, role)
 		r.rememberEvent(sm, originalEventName, event)
 		signalActivityStarted(ctx)
@@ -5354,7 +5776,7 @@ func (r *runner) executeBehavior(ctx context.Context, sm *confInstance, event hs
 			return nil, err
 		}
 		result = value
-		if strings.HasPrefix(fmt.Sprint(op["op"]), "return_") {
+		if strings.HasPrefix(fmt.Sprint(op["op"]), "return_") && (role == "guard" || role == "operation" || role == "timer") {
 			return result, nil
 		}
 	}
@@ -5404,14 +5826,8 @@ func (r *runner) setEventMetadata(event *hsm.Event, name string, value any) {
 		return
 	}
 	switch name {
-	case "name":
-		event.Name = fmt.Sprint(value)
-	case "id":
-		event.ID = fmt.Sprint(value)
-	case "source":
-		event.Source = fmt.Sprint(value)
-	case "target":
-		event.Target = fmt.Sprint(value)
+	case "name", "id", "source", "target":
+		return
 	default:
 		metadata := object(event.Schema)
 		if metadata == nil {
@@ -5423,10 +5839,6 @@ func (r *runner) setEventMetadata(event *hsm.Event, name string, value any) {
 }
 
 func (r *runner) executeBehaviorOp(ctx context.Context, sm *confInstance, event *hsm.Event, operation op, behaviorID, role string) (any, error) {
-	if role == "activity" && ctx.Err() != nil {
-		r.recordActivityCancel(ctx, behaviorID)
-		return nil, errBehaviorCancelled
-	}
 	switch operation["op"] {
 	case "trace":
 		if r.deferReplayBarrier {
@@ -5448,6 +5860,8 @@ func (r *runner) executeBehaviorOp(ctx context.Context, sm *confInstance, event 
 			if err := r.waitFor(ctx, set, "operation set_attr"); err != nil {
 				return nil, err
 			}
+		} else if role == "activity" {
+			r.addPendingWork(set)
 		}
 	case "set_attr_from_event_data":
 		name, _ := requireString(stepMap(operation), "name")
@@ -5462,6 +5876,8 @@ func (r *runner) executeBehaviorOp(ctx context.Context, sm *confInstance, event 
 			if err := r.waitFor(ctx, set, "operation set_attr_from_event_data"); err != nil {
 				return nil, err
 			}
+		} else if role == "activity" {
+			r.addPendingWork(set)
 		}
 	case "get_attr", "return_attr":
 		name, _ := requireString(stepMap(operation), "name")
@@ -5481,6 +5897,9 @@ func (r *runner) executeBehaviorOp(ctx context.Context, sm *confInstance, event 
 		return reflect.DeepEqual(eventDataPath(*event, fmt.Sprint(operation["path"])), normalizeJSONValue(operation["value"])), nil
 	case "event_data_get":
 		return eventDataPath(*event, fmt.Sprint(operation["path"])), nil
+	case "event_application_metadata_equals":
+		name, _ := requireString(stepMap(operation), "name")
+		return reflect.DeepEqual(eventApplicationMetadata(*event, name), normalizeJSONValue(operation["value"])), nil
 	case "event_metadata_set":
 		name, _ := requireString(stepMap(operation), "name")
 		r.setEventMetadata(event, name, normalizeJSONValue(operation["value"]))
@@ -5504,13 +5923,19 @@ func (r *runner) executeBehaviorOp(ctx context.Context, sm *confInstance, event 
 					r.traceDeferredDispatch(instance, nested.Name)
 				}
 			}
-			dispatched = r.dispatchAll(ctx, nested, false)
+			dispatched = r.dispatchAll(ctx, nested, false, sm)
 		} else if target, ok := operation["target"].(string); ok {
 			r.trace = append(r.trace, anyMap{"type": "dispatch", "event": nested.Name, "target": target})
-			if instance := r.instances[target]; instance != nil {
+			if instance := r.instances[target]; instance != nil && r.started[target] {
 				r.traceDeferredDispatch(instance, nested.Name)
 			}
-			dispatched = r.dispatchTo(ctx, nested, []string{target}, false)
+			dispatched = r.dispatchTo(ctx, nested, []string{target}, false, sm)
+		} else if target, ok := operation["instance"].(string); ok {
+			r.trace = append(r.trace, anyMap{"type": "dispatch", "event": nested.Name, "target": target})
+			if instance := r.instances[target]; instance != nil && r.started[target] {
+				r.traceDeferredDispatch(instance, nested.Name)
+			}
+			dispatched = r.dispatchTo(ctx, nested, []string{target}, false, sm)
 		} else if groupID, ok := operation["group"].(string); ok {
 			r.trace = append(r.trace, anyMap{"type": "dispatch", "event": nested.Name, "target": groupID})
 			group := r.groups[groupID]
@@ -5521,12 +5946,12 @@ func (r *runner) executeBehaviorOp(ctx context.Context, sm *confInstance, event 
 				return nil, conformanceErr
 			}
 			for _, memberID := range r.groupMembers[groupID] {
-				if instance := r.instances[memberID]; instance != nil {
+				if instance := r.instances[memberID]; instance != nil && r.started[memberID] {
 					r.traceDeferredDispatch(instance, nested.Name)
 				}
 			}
 			var dispatchErr *conformanceError
-			dispatched, dispatchErr = r.dispatchGroup(ctx, nested, groupID, false)
+			dispatched, dispatchErr = r.dispatchGroup(ctx, nested, groupID, false, sm)
 			if dispatchErr != nil {
 				r.trace = append(r.trace, anyMap{"type": "error", "code": dispatchErr.code})
 				r.stableLabel = ""
@@ -5541,7 +5966,10 @@ func (r *runner) executeBehaviorOp(ctx context.Context, sm *confInstance, event 
 			if err := r.waitFor(ctx, dispatched, "operation dispatch"); err != nil {
 				return nil, err
 			}
-		} else if role == "activity" {
+		} else {
+			r.addPendingWork(dispatched)
+		}
+		if !waitForDispatch && role == "activity" {
 			runtimeYield()
 			if ctx.Err() != nil || r.activityEventExits(ctx, nested.Name) {
 				return nil, errBehaviorCancelled
@@ -5566,17 +5994,22 @@ func (r *runner) executeBehaviorOp(ctx context.Context, sm *confInstance, event 
 			case <-ctx.Done():
 				return nil, errBehaviorCancelled
 			}
-		}
-		if role == "operation" && !r.inRuntimeProcessing(ctx, sm) {
-			if err := r.waitFor(ctx, sm.Wait(), "operation call"); err != nil {
-				return nil, err
+			if ctx.Err() != nil || r.activityEventExits(ctx, r.operationNameInScope(ctx, sm, name)) {
+				return nil, errBehaviorCancelled
 			}
 		}
 	case "snapshot":
 		snapshot := hsm.TakeSnapshot(ctx, sm)
 		state := snapshot.State
-		if currentBehaviorState := behaviorState(ctx); currentBehaviorState != "" {
+		if currentBehaviorState := behaviorState(ctx); currentBehaviorState != "" && (role == "entry" || role == "exit" || role == "activity") {
 			state = currentBehaviorState
+			if role == "entry" {
+				state = path.Dir(state)
+			}
+		} else if role == "timer" {
+			if scope := behaviorScope(ctx, ""); scope != "" {
+				state = rootPath(scope)
+			}
 		}
 		r.trace = append(r.trace, anyMap{"type": "snapshot", "state": state})
 		return r.normalizeSnapshot(snapshot), nil
@@ -5597,11 +6030,15 @@ func (r *runner) executeBehaviorOp(ctx context.Context, sm *confInstance, event 
 		}
 		r.clearEventMemory(sm, raised.Name)
 		dispatched := hsm.Dispatch(ctx, sm, raised)
-		if role == "operation" && !r.inRuntimeProcessing(ctx, sm) {
+		waitForRaise := role == "operation" && !r.inRuntimeProcessing(ctx, sm)
+		if waitForRaise {
 			if err := r.waitFor(ctx, dispatched, "operation raise"); err != nil {
 				return nil, err
 			}
-		} else if role == "activity" {
+		} else {
+			r.addPendingWork(dispatched)
+		}
+		if !waitForRaise && role == "activity" {
 			runtimeYield()
 			if ctx.Err() != nil || r.activityEventExits(ctx, raised.Name) {
 				return nil, errBehaviorCancelled
@@ -5662,18 +6099,9 @@ func (r *runner) activityEventExits(ctx context.Context, eventName string) bool 
 	if state == "" || eventName == "" {
 		return false
 	}
-	current := state
-	for current != "" && current != "." && current != "/" {
-		if r.activityExitEvents[current][eventName] {
-			return true
-		}
-		next := path.Dir(current)
-		if next == current {
-			break
-		}
-		current = next
-	}
-	return false
+	return walkStateAncestors(state, func(current string) bool {
+		return r.activityExitEvents[current][eventName]
+	}) != ""
 }
 
 func (r *runner) recordError(err error) {
@@ -5712,6 +6140,9 @@ func (r *runner) recordExpectedError(err error) {
 }
 
 func (r *runner) recordLifecycleError(message string) {
+	// Lifecycle IR errors are adapter-normalized so channel-returning Go APIs
+	// can keep inactive Set/Restart/Dispatch as closed no-ops while Call
+	// exposes ErrInvalidState directly.
 	err := &conformanceError{code: "lifecycle_error", message: message}
 	r.trace = append(r.trace, anyMap{"type": "error", "code": err.code})
 	r.recordError(err)
@@ -5978,6 +6409,10 @@ func (r *runner) normalizeSnapshot(snapshot hsm.Snapshot) anyMap {
 		"attributes":     attrs,
 		"queue_len":      snapshot.QueueLen,
 	}
+	transitions := r.normalizedSnapshotTransitions(snapshot)
+	if len(transitions) > 0 {
+		out["transitions"] = transitions
+	}
 	events := r.normalizedSnapshotEvents(snapshot)
 	if len(events) > 0 {
 		out["events"] = events
@@ -5985,8 +6420,38 @@ func (r *runner) normalizeSnapshot(snapshot hsm.Snapshot) anyMap {
 	return out
 }
 
+func (r *runner) normalizedSnapshotTransitions(snapshot hsm.Snapshot) []any {
+	transitions := make([]any, 0, len(snapshot.Transitions))
+	for _, transition := range snapshot.Transitions {
+		target := any(transition.Target)
+		if transition.Target == "" {
+			target = nil
+		}
+		events := append([]string(nil), transition.Events...)
+		for i, event := range events {
+			if normalized, ok := r.canonicalTimerEventName(event); ok {
+				events[i] = normalized
+			}
+		}
+		transitions = append(transitions, anyMap{
+			"name":   transition.Name,
+			"kind":   normalizeTransitionKind(transition.Kind),
+			"source": transition.Source,
+			"target": target,
+			"events": events,
+			"guard":  transition.Guard,
+		})
+	}
+	return transitions
+}
+
 func (r *runner) normalizedSnapshotEvents(snapshot hsm.Snapshot) []any {
-	events := r.snapshotEventsFromStateIR(snapshot.State, snapshot.Events)
+	events := []any{}
+	if len(snapshot.Events) == 0 {
+		events = r.snapshotEventsFromStateIR(snapshot.State, snapshot.Events)
+	} else {
+		r.runtimeTimerEventNamesByOwner(snapshot.State, snapshot.Events)
+	}
 	seen := map[string]bool{}
 	for _, event := range events {
 		seen[snapshotEventDetailKey(object(event))] = true
@@ -6041,13 +6506,8 @@ func (r *runner) snapshotEventsFromStateIR(statePath string, runtimeEvents []hsm
 			events = append(events, event)
 		}
 	}
-	appendOwner(statePath)
-	for parent := path.Dir(statePath); parent != "" && parent != "." && parent != "/"; parent = path.Dir(parent) {
-		appendOwner(parent)
-		next := path.Dir(parent)
-		if next == parent {
-			break
-		}
+	for _, owner := range stateOwnerChain(statePath) {
+		appendOwner(owner)
 	}
 	return events
 }
@@ -6070,7 +6530,7 @@ func (r *runner) runtimeTimerEventNamesByOwner(statePath string, events []hsm.Ev
 		}
 		timerEvents = append(timerEvents, event)
 	}
-	if len(timerEvents) != len(expected) {
+	if len(timerEvents) > len(expected) {
 		r.recordError(conformanceError{
 			code:    "timer_snapshot_binding_error",
 			message: fmt.Sprintf("snapshot has %d runtime timer event(s), active IR has %d timer event(s)", len(timerEvents), len(expected)),
@@ -6080,7 +6540,14 @@ func (r *runner) runtimeTimerEventNamesByOwner(statePath string, events []hsm.Ev
 	used := map[string]bool{}
 	for index, event := range timerEvents {
 		name := ""
-		if bound, ok := r.canonicalTimerEventName(event.Name); ok {
+		if mapped := r.timerEventNameForRuntimeEvent(event.Name); mapped != "" {
+			if _, exists := expectedByName[mapped]; !exists {
+				r.recordError(conformanceError{code: "timer_snapshot_binding_error", message: "snapshot timer event is bound outside active IR timer set: " + mapped})
+				return names
+			}
+			r.bindTimerEventName(event.Name, mapped)
+			name = mapped
+		} else if bound, ok := r.canonicalTimerEventName(event.Name); ok {
 			if _, exists := expectedByName[bound]; !exists {
 				r.recordError(conformanceError{code: "timer_snapshot_binding_error", message: "snapshot timer event is bound outside active IR timer set: " + bound})
 				return names
@@ -6102,15 +6569,7 @@ func (r *runner) runtimeTimerEventNamesByOwner(statePath string, events []hsm.Ev
 }
 
 func (r *runner) snapshotOwnerChain(statePath string) []string {
-	owners := []string{statePath}
-	for parent := path.Dir(statePath); parent != "" && parent != "." && parent != "/"; parent = path.Dir(parent) {
-		owners = append(owners, parent)
-		next := path.Dir(parent)
-		if next == parent {
-			break
-		}
-	}
-	return owners
+	return stateOwnerChain(statePath)
 }
 
 func (r *runner) snapshotEventsForOwner(statePath string, runtimeTimerNames map[string][]string) []any {
@@ -6228,11 +6687,7 @@ func (r *runner) snapshotEventIsPlainWhen(statePath, eventName string) bool {
 			continue
 		}
 		_, targetRoot := r.snapshotRoots(statePath)
-		names, err := r.transitionEventNames(transition, targetRoot)
-		if err != nil {
-			continue
-		}
-		if containsString(names, eventName) {
+		if r.transitionHandlesEvent(transition, targetRoot, eventName) {
 			return true
 		}
 	}
@@ -6241,8 +6696,13 @@ func (r *runner) snapshotEventIsPlainWhen(statePath, eventName string) bool {
 
 func (r *runner) groupSnapshot(groupID string) anyMap {
 	members := anyMap{}
-	for _, memberID := range r.groupMembers[groupID] {
-		members[memberID] = r.stateFor(memberID)
+	snapshots := hsm.TakeSnapshots(r.ctx, r.groups[groupID])
+	for index, memberID := range r.groupMembers[groupID] {
+		if index >= len(snapshots) {
+			members[memberID] = ""
+			continue
+		}
+		members[memberID] = snapshots[index].State
 	}
 	return anyMap{"members": members}
 }
@@ -6261,6 +6721,23 @@ func normalizeEventKind(eventKind uint64) int {
 		return 71964
 	default:
 		return int(eventKind)
+	}
+}
+
+func normalizeTransitionKind(transitionKind uint64) int {
+	switch transitionKind {
+	case uint64(hsm.ExternalKind):
+		return 67343
+	case uint64(hsm.SelfKind):
+		return 67344
+	case uint64(hsm.InternalKind):
+		return 67345
+	case uint64(hsm.LocalKind):
+		return 67346
+	case uint64(hsm.TransitionKind):
+		return 263
+	default:
+		return int(transitionKind)
 	}
 }
 
@@ -6330,6 +6807,18 @@ func (r *runner) requireBehaviorID(raw any) (string, error) {
 	return id, nil
 }
 
+func (r *runner) requireBehaviorIDs(raw []any) ([]string, error) {
+	ids := make([]string, 0, len(raw))
+	for _, ref := range raw {
+		behaviorID, err := r.requireBehaviorID(ref)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, behaviorID)
+	}
+	return ids, nil
+}
+
 func eventName(raw any) string {
 	name, _ := eventNameValue(raw)
 	return name
@@ -6352,6 +6841,23 @@ func eventNameValue(raw any) (string, error) {
 	return "", fmt.Errorf("event reference requires string or object event")
 }
 
+func eventForOnName(name string) hsm.Event {
+	switch name {
+	case hsm.InitialEvent.Name:
+		return hsm.InitialEvent
+	case hsm.ErrorEvent.Name:
+		return hsm.ErrorEvent
+	case hsm.AnyEvent.Name:
+		return hsm.AnyEvent
+	case hsm.FinalEvent.Name:
+		return hsm.FinalEvent
+	case hsm.ObservationEvent.Name:
+		return hsm.ObservationEvent
+	default:
+		return hsm.Event{Name: name, Kind: hsm.EventKind}
+	}
+}
+
 func containsString(values []string, needle string) bool {
 	for _, value := range values {
 		if value == needle {
@@ -6359,6 +6865,32 @@ func containsString(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func walkStateAncestors(state string, visit func(string) bool) string {
+	current := state
+	for {
+		if current == "" || current == "." || current == "/" {
+			return ""
+		}
+		if visit != nil && visit(current) {
+			return current
+		}
+		next := path.Dir(current)
+		if next == current {
+			return ""
+		}
+		current = next
+	}
+}
+
+func stateOwnerChain(state string) []string {
+	owners := []string{}
+	walkStateAncestors(state, func(owner string) bool {
+		owners = append(owners, owner)
+		return false
+	})
+	return owners
 }
 
 func memberIDValue(raw any) (string, error) {
@@ -6395,43 +6927,7 @@ func transitionKind(name string) uint64 {
 }
 
 func transitionKindOverride(kindValue uint64) hsm.RedefinableElement {
-	return func(_ *hsm.Model, stack []hsm.Element) hsm.Element {
-		for index := len(stack) - 1; index >= 0; index-- {
-			element := stack[index]
-			if element == nil || !hsm.IsKind(element.Kind(), hsm.TransitionKind) {
-				continue
-			}
-			if setTransitionKind(element, kindValue) {
-				if element.Kind() != kindValue {
-					panic(fmt.Errorf("transition_kind: override verification failed"))
-				}
-				return element
-			}
-			panic(fmt.Errorf("transition_kind: unable to apply transition kind override"))
-		}
-		panic(fmt.Errorf("transition_kind: override must be used within a transition"))
-	}
-}
-
-func setTransitionKind(element hsm.Element, kindValue uint64) bool {
-	value := reflect.ValueOf(element)
-	if value.Kind() != reflect.Pointer || value.IsNil() {
-		return false
-	}
-	target := value.Elem()
-	if !target.IsValid() {
-		return false
-	}
-	embedded := target.FieldByName("element")
-	if !embedded.IsValid() {
-		return false
-	}
-	kindField := embedded.FieldByName("kind")
-	if !kindField.IsValid() || !kindField.CanAddr() || kindField.Kind() != reflect.Uint64 {
-		return false
-	}
-	reflect.NewAt(kindField.Type(), unsafe.Pointer(kindField.UnsafeAddr())).Elem().SetUint(kindValue)
-	return true
+	return hsm.TransitionType(kindValue)
 }
 
 func validateOnlyKeys(m anyMap, allowed ...string) error {
@@ -6449,6 +6945,30 @@ func validateOnlyKeys(m anyMap, allowed ...string) error {
 
 func resolveInitialTarget(target, ownerPath, sourceRoot, targetRoot string) string {
 	return resolvePathInScope(target, ownerPath, true, sourceRoot, targetRoot)
+}
+
+func buildPathExpression(raw, resolved, sourceRoot, targetRoot string) string {
+	if raw == "" {
+		return resolved
+	}
+	clean := path.Clean(resolved)
+	expressionRoot := sourceRoot
+	if targetRoot != "" {
+		expressionRoot = rootPath(targetRoot)
+	}
+	if expressionRoot == "" || sourceRoot == "" {
+		return resolved
+	}
+	if clean == expressionRoot {
+		return "."
+	}
+	if strings.HasPrefix(clean, expressionRoot+"/") {
+		return "/" + strings.TrimPrefix(clean, expressionRoot+"/")
+	}
+	if sourceRoot != targetRoot {
+		return resolved
+	}
+	return resolved
 }
 
 func resolveTransitionTarget(target, ownerPath, sourcePath string, bareTargets bool, sourceRoot, targetRoot string) string {
@@ -6518,6 +7038,13 @@ func rootPath(ownerPath string) string {
 	return "/" + name
 }
 
+func localBuilderName(name string) string {
+	if name == "" || !path.IsAbs(name) {
+		return name
+	}
+	return path.Base(name)
+}
+
 func cloneMap(in anyMap) anyMap {
 	out := anyMap{}
 	for key, value := range in {
@@ -6578,6 +7105,10 @@ func eventMetadata(event hsm.Event, name string) any {
 	default:
 		return object(event.Schema)[name]
 	}
+}
+
+func eventApplicationMetadata(event hsm.Event, name string) any {
+	return object(event.Schema)[name]
 }
 
 func object(value any) anyMap {
@@ -6683,7 +7214,7 @@ func timerValueDuration(value any) (time.Duration, error) {
 
 func positiveTimerDuration(duration time.Duration) time.Duration {
 	if duration <= 0 {
-		return time.Nanosecond
+		return 0
 	}
 	return duration
 }

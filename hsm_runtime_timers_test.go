@@ -47,6 +47,46 @@ func TestRuntimeAfterUsesDeterministicTimer(t *testing.T) {
 	}
 }
 
+func TestGeneratedTimerTriggersUseUniqueEventNames(t *testing.T) {
+	model := hsm.Define(
+		"RuntimeTimerNamesHSM",
+		hsm.Initial(hsm.Target("foo")),
+		hsm.State("foo",
+			hsm.Transition(
+				hsm.After(func(context.Context, *THSM, hsm.Event) time.Duration {
+					return time.Minute
+				}),
+				hsm.Every(func(context.Context, *THSM, hsm.Event) time.Duration {
+					return time.Minute
+				}),
+				hsm.At(func(context.Context, *THSM, hsm.Event) time.Time {
+					return time.Now().Add(time.Minute)
+				}),
+				hsm.Target("../bar"),
+			),
+		),
+		hsm.State("bar"),
+	)
+
+	for _, snapshot := range model.TransitionSnapshots() {
+		if snapshot.Source != "/RuntimeTimerNamesHSM/foo" {
+			continue
+		}
+		if len(snapshot.Events) != 3 {
+			t.Fatalf("timer transition events = %v, want three generated events", snapshot.Events)
+		}
+		seen := map[string]bool{}
+		for _, event := range snapshot.Events {
+			if seen[event] {
+				t.Fatalf("duplicate generated timer event %q in %v", event, snapshot.Events)
+			}
+			seen[event] = true
+		}
+		return
+	}
+	t.Fatal("timer transition snapshot not found")
+}
+
 func TestRuntimeAfterNegativeDurationDoesNotSchedule(t *testing.T) {
 	harness := newDeterministicClockHarness()
 	model := hsm.Define(
@@ -136,12 +176,11 @@ func TestRuntimeEveryUsesManualTriggers(t *testing.T) {
 		t.Fatalf("expected state to be foo, got %s", sm.State())
 	}
 
-	registration := harness.awaitRegistration(t, "Every transition")
-	if registration.requested != 10*time.Minute {
-		t.Fatalf("expected Every duration %v, got %v", 10*time.Minute, registration.requested)
-	}
-
 	for expected := int32(1); expected <= 3; expected++ {
+		registration := harness.awaitRegistration(t, "Every transition")
+		if registration.requested != 10*time.Minute {
+			t.Fatalf("expected Every duration %v, got %v", 10*time.Minute, registration.requested)
+		}
 		registration.trigger(t)
 		select {
 		case got := <-tickProcessed:
@@ -155,6 +194,71 @@ func TestRuntimeEveryUsesManualTriggers(t *testing.T) {
 
 	if ticks.Load() != 3 {
 		t.Fatalf("expected 3 Every ticks, got %d", ticks.Load())
+	}
+}
+
+func TestRuntimeEveryDoesNotRescheduleAfterSourceExit(t *testing.T) {
+	harness := newDeterministicClockHarness()
+	var durationCalls atomic.Int32
+
+	model := hsm.Define(
+		"RuntimeEveryExitHSM",
+		hsm.Initial(hsm.Target("foo")),
+		hsm.State("foo",
+			hsm.Transition(
+				hsm.Every(func(context.Context, *THSM, hsm.Event) time.Duration {
+					durationCalls.Add(1)
+					return 10 * time.Minute
+				}),
+				hsm.Target("../bar"),
+			),
+		),
+		hsm.State("bar"),
+	)
+
+	sm := hsm.Started(context.Background(), &THSM{}, &model, hsm.Config{
+		Clock: hsm.Clock{NewTimer: harness.NewTimer},
+	})
+	enteredBar := hsm.AfterEntry(sm.Context(), sm, "/RuntimeEveryExitHSM/bar")
+	registration := harness.awaitRegistration(t, "Every exit transition")
+	if registration.requested != 10*time.Minute {
+		t.Fatalf("expected Every duration %v, got %v", 10*time.Minute, registration.requested)
+	}
+	registration.trigger(t)
+	awaitWaiter(t, "Every exit target entry", enteredBar)
+	harness.assertNoRegistration(t, "Every after source exit")
+	if got := durationCalls.Load(); got != 1 {
+		t.Fatalf("expected one Every duration evaluation, got %d", got)
+	}
+}
+
+func TestRuntimeEveryZeroDurationDoesNotSchedule(t *testing.T) {
+	harness := newDeterministicClockHarness()
+	fired := make(chan struct{}, 1)
+	model := hsm.Define(
+		"RuntimeEveryZeroHSM",
+		hsm.Initial(hsm.Target("foo")),
+		hsm.State("foo",
+			hsm.Transition(
+				hsm.Every(func(ctx context.Context, sm *THSM, event hsm.Event) time.Duration {
+					return 0
+				}),
+				hsm.Effect(func(ctx context.Context, sm *THSM, event hsm.Event) {
+					fired <- struct{}{}
+				}),
+			),
+		),
+	)
+
+	sm := hsm.Started(context.Background(), &THSM{}, &model, hsm.Config{Clock: harness.Clock()})
+	harness.assertNoRegistration(t, "zero Every duration")
+	select {
+	case <-fired:
+		t.Fatal("zero Every duration fired transition")
+	case <-time.After(waiterShouldRemainPendingFor):
+	}
+	if sm.State() != "/RuntimeEveryZeroHSM/foo" {
+		t.Fatalf("expected state to remain foo, got %s", sm.State())
 	}
 }
 
@@ -183,6 +287,40 @@ func TestRuntimeWhenWaitsForExplicitSignal(t *testing.T) {
 
 	if sm.State() != "/RuntimeWhenHSM/bar" {
 		t.Fatalf("expected state to be bar, got %s", sm.State())
+	}
+}
+
+func TestRuntimeWhenClosedChannelDoesNotLoop(t *testing.T) {
+	var guardCalls atomic.Int32
+	ready := make(chan struct{})
+	close(ready)
+	model := hsm.Define(
+		"RuntimeWhenClosedHSM",
+		hsm.Initial(hsm.Target("foo")),
+		hsm.State("foo",
+			hsm.Transition(
+				hsm.When(func(ctx context.Context, sm *THSM, event hsm.Event) <-chan struct{} {
+					return ready
+				}),
+				hsm.Guard(func(ctx context.Context, sm *THSM, event hsm.Event) bool {
+					guardCalls.Add(1)
+					return false
+				}),
+				hsm.Target("../bar"),
+			),
+		),
+		hsm.State("bar"),
+	)
+
+	sm := hsm.Started(context.Background(), &THSM{}, &model)
+	entered := hsm.AfterEntry(sm.Context(), sm, "/RuntimeWhenClosedHSM/bar")
+	assertWaiterPending(t, "RuntimeWhenClosedHSM entering bar", entered)
+	time.Sleep(waiterShouldRemainPendingFor)
+	if got := guardCalls.Load(); got > 1 {
+		t.Fatalf("guard calls = %d, want at most 1", got)
+	}
+	if sm.State() != "/RuntimeWhenClosedHSM/foo" {
+		t.Fatalf("expected state to remain foo, got %s", sm.State())
 	}
 }
 

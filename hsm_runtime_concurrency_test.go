@@ -350,7 +350,7 @@ func storeMaxInt32(target *atomic.Int32, value int32) {
 	}
 }
 
-func buildMultiInstanceDispatchModel(event hsm.Event) hsm.Model {
+func buildMultiInstanceDispatchModel(event hsm.Event) hsm.FinalizedModel {
 	return hsm.Define(
 		"MultiInstanceDispatchHSM",
 		hsm.Initial(hsm.Target("idle")),
@@ -364,7 +364,7 @@ func buildMultiInstanceDispatchModel(event hsm.Event) hsm.Model {
 	)
 }
 
-func startMultiInstanceDispatchGroup(model *hsm.Model, ids ...string) (context.Context, map[string]hsm.Instance) {
+func startMultiInstanceDispatchGroup(model *hsm.FinalizedModel, ids ...string) (context.Context, map[string]hsm.Instance) {
 	ctx := context.Background()
 	instances := make(map[string]hsm.Instance, len(ids))
 	for _, id := range ids {

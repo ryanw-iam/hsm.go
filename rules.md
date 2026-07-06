@@ -7,7 +7,7 @@
 - HSM07: NEVER give an initial pseudostate more than one outgoing transition.
 - HSM08: ALWAYS declare `hsm.Source(...)`, `hsm.Target(...)`, `hsm.On(...)`, `hsm.OnSet(...)`, `hsm.OnCall(...)`, `hsm.After(...)`, `hsm.Every(...)`, `hsm.When(...)`, `hsm.Guard(...)`, and `hsm.Effect(...)` inside `hsm.Transition(...)`.
 - HSM09: ALWAYS declare `hsm.Entry(...)`, `hsm.Exit(...)`, `hsm.Activity(...)`, and `hsm.Defer(...)` inside `hsm.State(...)`.
-- HSM10: NEVER write a state transition with no trigger and expect implicit completion semantics; completion transitions without explicit events are not implemented.
+- HSM10: ALWAYS use a triggerless state transition when the transition should run after the source state completes by reaching a final child.
 - HSM11: ALWAYS use explicit `CompletionEventKind` events when entry, exit, or activity behavior must trigger prioritized follow-on protocol semantics within the machine.
 - HSM12: NEVER use wildcard event names or pattern strings for transition triggers; use explicit events or `hsm.AnyEvent`.
 - HSM13: ALWAYS use `hsm.On(hsm.AnyEvent)` only as a catch-all fallback.

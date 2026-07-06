@@ -2,6 +2,7 @@ package hsm_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"slices"
@@ -368,6 +369,14 @@ func assertWaiterClosed(t *testing.T, description string, waiter <-chan struct{}
 	case <-waiter:
 	default:
 		t.Fatalf("expected %s waiter to already be closed", description)
+	}
+}
+
+func assertCompletionErr(t *testing.T, description string, completion hsm.Completion, want error) {
+	t.Helper()
+	awaitWaiter(t, description, completion)
+	if err := completion.Err(); !errors.Is(err, want) {
+		t.Fatalf("%s completion error = %v, want %v", description, err, want)
 	}
 }
 

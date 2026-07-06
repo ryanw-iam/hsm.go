@@ -43,6 +43,30 @@ func TestRuntimeRulesConformance(t *testing.T) {
 		assertRuleState(t, sm.State(), "/CompositeInitialRulesHSM/parent/child")
 	})
 
+	t.Run("HSM10/completion_transition_follows_final_child", func(t *testing.T) {
+		advanceEvent := hsm.Event{Name: "advance"}
+		model := hsm.Define(
+			"CompletionTransitionRulesHSM",
+			hsm.Initial(hsm.Target("running")),
+			hsm.State("running",
+				hsm.Initial(hsm.Target("work")),
+				hsm.State("work",
+					hsm.Transition(hsm.On(advanceEvent), hsm.Target("../complete")),
+				),
+				hsm.Final("complete"),
+			),
+			hsm.State("done"),
+			hsm.Transition(
+				hsm.Source("running"),
+				hsm.Target("done"),
+			),
+		)
+
+		sm := hsm.Started(context.Background(), &THSM{}, &model)
+		awaitWaiter(t, "completion transition advance", hsm.Dispatch(sm.Context(), sm, advanceEvent))
+		assertRuleState(t, sm.State(), "/CompletionTransitionRulesHSM/done")
+	})
+
 	t.Run("HSM11/completion_event_drives_prioritized_follow_on_transition", func(t *testing.T) {
 		triggerEvent := hsm.Event{Name: "trigger"}
 		regularEvent := hsm.Event{Name: "regular"}
@@ -742,6 +766,43 @@ func TestRuntimeRulesConformance(t *testing.T) {
 		assertRuleTrace(t, trace.snapshot(), []string{"activate", "resume"})
 	})
 
+	t.Run("HSM48/deferred_events_replay_after_ordinary_composite_exit", func(t *testing.T) {
+		leaveEvent := hsm.Event{Name: "leave"}
+		resumeEvent := hsm.Event{Name: "resume"}
+		model := hsm.Define(
+			"DeferredCompositeReplayRulesHSM",
+			hsm.Initial(hsm.Target("parent")),
+			hsm.State("parent",
+				hsm.Initial(hsm.Target("idle")),
+				hsm.State("idle",
+					hsm.Defer(resumeEvent),
+				),
+				hsm.Transition(
+					hsm.On(leaveEvent),
+					hsm.Target("../done"),
+				),
+			),
+			hsm.State("done",
+				hsm.Transition(
+					hsm.On(resumeEvent),
+					hsm.Target("../handled"),
+				),
+			),
+			hsm.State("handled"),
+		)
+
+		sm := hsm.Started(context.Background(), &THSM{}, &model)
+		resumeProcessed := hsm.AfterProcess(sm.Context(), sm, resumeEvent)
+		handledEntered := hsm.AfterEntry(sm.Context(), sm, "/DeferredCompositeReplayRulesHSM/handled")
+
+		awaitWaiter(t, "deferred resume dispatch", hsm.Dispatch(sm.Context(), sm, resumeEvent))
+		assertWaiterPending(t, "resume should be deferred under ordinary composite", resumeProcessed)
+		awaitWaiter(t, "leave composite dispatch", hsm.Dispatch(sm.Context(), sm, leaveEvent))
+		awaitWaiter(t, "resume replay after composite exit", resumeProcessed)
+		awaitWaiter(t, "handled entry", handledEntered)
+		assertRuleState(t, sm.State(), "/DeferredCompositeReplayRulesHSM/handled")
+	})
+
 	t.Run("HSM51/history_fallback_transition_overrides_parent_initial_on_first_reentry", func(t *testing.T) {
 		reenterEvent := hsm.Event{Name: "reenter"}
 		model := hsm.Define(
@@ -828,7 +889,7 @@ func TestRuntimeRulesConformance(t *testing.T) {
 	})
 }
 
-func defineAnyEventRulesModel(trace *runtimeTrace) hsm.Model {
+func defineAnyEventRulesModel(trace *runtimeTrace) hsm.FinalizedModel {
 	specialEvent := hsm.Event{Name: "special"}
 	guardedEvent := hsm.Event{Name: "guarded"}
 	resetEvent := hsm.Event{Name: "reset"}

@@ -3,11 +3,12 @@ package hsm_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	hsm "github.com/stateforward/hsm.go"
 )
 
-func TestEventMetadataMutationsDoNotReachCallerEvent(t *testing.T) {
+func TestEventEnvelopeMutationsDoNotReachCallerEvent(t *testing.T) {
 	type OwnershipHSM struct {
 		hsm.HSM
 	}
@@ -58,18 +59,18 @@ func TestEventMetadataMutationsDoNotReachCallerEvent(t *testing.T) {
 	if event.Kind != 42 || event.Name != "mutate" || event.ID != "caller-id" || event.Source != "caller-source" || event.Target != "caller-target" {
 		t.Fatalf("caller event metadata was mutated: %#v", event)
 	}
-	if got := schema["owner"]; got != "caller" {
-		t.Fatalf("caller schema owner = %v, want caller", got)
+	if got := schema["owner"]; got != "behavior" {
+		t.Fatalf("caller schema owner = %v, want behavior", got)
 	}
-	if got := schema["nested"].(map[string]any)["value"]; got != "caller" {
-		t.Fatalf("caller nested schema value = %v, want caller", got)
+	if got := schema["nested"].(map[string]any)["value"]; got != "behavior" {
+		t.Fatalf("caller nested schema value = %v, want behavior", got)
 	}
 	if got := data["value"]; got != "behavior" {
 		t.Fatalf("data value = %q, want behavior to preserve application-owned reference semantics", got)
 	}
 }
 
-func TestDispatchToIsolatesSiblingEventMetadataButSharesDataReference(t *testing.T) {
+func TestDispatchToSharesSiblingEventMetadataAndDataReference(t *testing.T) {
 	type OwnershipHSM struct {
 		hsm.HSM
 	}
@@ -129,16 +130,76 @@ func TestDispatchToIsolatesSiblingEventMetadataButSharesDataReference(t *testing
 
 	awaitWaiter(t, "targeted metadata ownership dispatch", hsm.DispatchTo(bravo.Context(), event, "alpha", "bravo"))
 	got := <-bravoSaw
-	if got.schemaOwner != "caller" {
-		t.Fatalf("bravo schema owner = %q, want caller", got.schemaOwner)
+	if got.schemaOwner != "alpha" {
+		t.Fatalf("bravo schema owner = %q, want alpha", got.schemaOwner)
 	}
-	if got.nestedValue != "caller" {
-		t.Fatalf("bravo nested schema value = %q, want caller", got.nestedValue)
+	if got.nestedValue != "alpha" {
+		t.Fatalf("bravo nested schema value = %q, want alpha", got.nestedValue)
 	}
 	if got.dataValue != "seen" {
 		t.Fatalf("bravo data value = %q, want shared application-owned data", got.dataValue)
 	}
-	if got := schema["owner"]; got != "caller" {
-		t.Fatalf("caller schema owner = %v, want caller", got)
+	if got := schema["owner"]; got != "alpha" {
+		t.Fatalf("caller schema owner = %v, want alpha", got)
+	}
+}
+
+func TestGroupDispatchPopulatesRecipientEnvelope(t *testing.T) {
+	type OwnershipHSM struct {
+		hsm.HSM
+	}
+	type observed struct {
+		id     string
+		source string
+		target string
+	}
+
+	seen := make(chan observed, 2)
+	model := hsm.Define(
+		"GroupDispatchEnvelopeHSM",
+		hsm.State("idle"),
+		hsm.Initial(hsm.Target("idle")),
+		hsm.Transition(
+			hsm.On(hsm.Event{Name: "fanout"}),
+			hsm.Source("idle"),
+			hsm.Target("idle"),
+			hsm.Effect(func(ctx context.Context, sm *OwnershipHSM, event hsm.Event) {
+				seen <- observed{
+					id:     hsm.ID(sm),
+					source: event.Source,
+					target: event.Target,
+				}
+			}),
+		),
+	)
+	alpha := hsm.New(&OwnershipHSM{}, &model, hsm.Config{ID: "alpha"})
+	bravo := hsm.New(&OwnershipHSM{}, &model, hsm.Config{ID: "bravo"})
+	group := hsm.Start(context.Background(), hsm.MakeGroup("workers", alpha, bravo))
+	defer func() {
+		awaitWaiter(t, "group stop", hsm.Stop(group.Context(), group))
+	}()
+
+	awaitWaiter(t, "group fanout dispatch", hsm.Dispatch(group.Context(), group, hsm.Event{Name: "fanout"}))
+
+	observations := map[string]observed{}
+	for range 2 {
+		select {
+		case item := <-seen:
+			observations[item.id] = item
+		case <-time.After(waiterDeadline):
+			t.Fatal("timed out waiting for group dispatch observation")
+		}
+	}
+	for _, id := range []string{"alpha", "bravo"} {
+		item, ok := observations[id]
+		if !ok {
+			t.Fatalf("missing observation for %s", id)
+		}
+		if item.source != "workers" {
+			t.Fatalf("%s source = %q, want workers", id, item.source)
+		}
+		if item.target != id {
+			t.Fatalf("%s target = %q, want %s", id, item.target, id)
+		}
 	}
 }
