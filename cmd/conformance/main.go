@@ -5473,7 +5473,7 @@ func (r *runner) executeStep(step op) (err error) {
 			lifecycleFailed := false
 			for _, memberID := range memberIDs {
 				if !r.started[memberID] {
-					conformanceErr := &conformanceError{code: "lifecycle_error", message: "operation requires a started HSM"}
+					conformanceErr := &conformanceError{code: "runtime_error", message: "operation requires a started HSM"}
 					r.trace = append(r.trace, anyMap{"type": "error", "code": conformanceErr.code})
 					r.recordError(conformanceErr)
 					lifecycleFailed = true
@@ -5497,7 +5497,7 @@ func (r *runner) executeStep(step op) (err error) {
 			return err
 		}
 		if !r.started[instanceID] {
-			conformanceErr := &conformanceError{code: "lifecycle_error", message: "operation requires a started HSM"}
+			conformanceErr := &conformanceError{code: "runtime_error", message: "operation requires a started HSM"}
 			r.trace = append(r.trace, anyMap{"type": "error", "code": conformanceErr.code})
 			r.recordError(conformanceErr)
 			break
@@ -6143,7 +6143,7 @@ func (r *runner) recordLifecycleError(message string) {
 	// Lifecycle IR errors are adapter-normalized so channel-returning Go APIs
 	// can keep inactive Set/Restart/Dispatch as closed no-ops while Call
 	// exposes ErrInvalidState directly.
-	err := &conformanceError{code: "lifecycle_error", message: message}
+	err := &conformanceError{code: "runtime_error", message: message}
 	r.trace = append(r.trace, anyMap{"type": "error", "code": err.code})
 	r.recordError(err)
 }

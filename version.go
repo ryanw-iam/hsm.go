@@ -1,4 +1,4 @@
 package hsm
 
 // Version is the current semantic version of the hsm package.
-const Version = "v1.3.1"
+const Version = "v1.3.2"
