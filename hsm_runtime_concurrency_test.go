@@ -25,7 +25,7 @@ func TestRuntimeConcurrentDispatchSerializesProcessing(t *testing.T) {
 			barrier := newStartBarrier(concurrentDispatches)
 			firstStarted := make(chan struct{})
 			releaseFirst := make(chan struct{})
-			waiters := make(chan (<-chan struct{}), concurrentDispatches)
+			waiters := make(chan hsm.Completion, concurrentDispatches)
 			var firstOnce sync.Once
 			var inFlight atomic.Int32
 			var maxInFlight atomic.Int32
@@ -67,7 +67,7 @@ func TestRuntimeConcurrentDispatchSerializesProcessing(t *testing.T) {
 			barrier.release(t, "concurrent dispatch callers to be ready")
 			awaitWaiter(t, "first concurrent work effect to start", firstStarted)
 
-			collected := make([]<-chan struct{}, 0, concurrentDispatches)
+			collected := make([]hsm.Completion, 0, concurrentDispatches)
 			for len(collected) < concurrentDispatches {
 				select {
 				case waiter := <-waiters:

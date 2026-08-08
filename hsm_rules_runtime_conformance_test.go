@@ -257,7 +257,7 @@ func TestRuntimeRulesConformance(t *testing.T) {
 		barrier := newStartBarrier(concurrentDispatches)
 		firstStarted := make(chan struct{})
 		releaseFirst := make(chan struct{})
-		waiters := make(chan (<-chan struct{}), concurrentDispatches)
+		waiters := make(chan hsm.Completion, concurrentDispatches)
 		var firstOnce sync.Once
 		var inFlight atomic.Int32
 		var maxInFlight atomic.Int32
@@ -296,7 +296,7 @@ func TestRuntimeRulesConformance(t *testing.T) {
 		barrier.release(t, "concurrent callers ready")
 		awaitWaiter(t, "first serialized effect start", firstStarted)
 
-		collected := make([]<-chan struct{}, 0, concurrentDispatches)
+		collected := make([]hsm.Completion, 0, concurrentDispatches)
 		for len(collected) < concurrentDispatches {
 			collected = append(collected, <-waiters)
 		}

@@ -219,7 +219,7 @@ type runner struct {
 	queueGateMu           sync.Mutex
 	queueGates            []*queueFanoutGate
 	pendingWorkMu         sync.Mutex
-	pendingWork           []<-chan struct{}
+	pendingWork           []hsm.Completion
 }
 
 func main() {
@@ -3198,7 +3198,7 @@ func (r *runner) callInRuntimeProcessing(ctx context.Context, sm *confInstance, 
 	}
 	if r.instanceQueues[r.instanceIDFor(sm)] != "" {
 		wait := sm.Wait()
-		done := make(chan struct{})
+		done := make(chan error)
 		go func() {
 			defer close(done)
 			select {
@@ -3212,7 +3212,7 @@ func (r *runner) callInRuntimeProcessing(ctx context.Context, sm *confInstance, 
 				r.recordError(conformanceError{code: "runtime_wait_cancelled", message: "operation call " + operationPath})
 			}
 		}()
-		r.addPendingWork(done)
+		r.addPendingWork(hsm.Completion(done))
 		return result, nil
 	}
 	r.addPendingWork(hsm.Dispatch(ctx, sm, callEvent))
@@ -4339,39 +4339,39 @@ func (r *runner) requireUniqueGroupIDs() error {
 	return nil
 }
 
-func (r *runner) dispatchAll(ctx context.Context, event hsm.Event, sequential bool, current *confInstance) <-chan struct{} {
+func (r *runner) dispatchAll(ctx context.Context, event hsm.Event, sequential bool, current *confInstance) hsm.Completion {
 	return r.dispatchInstances(ctx, event, r.instanceOrder, sequential, current)
 }
 
-func (r *runner) dispatchGroup(ctx context.Context, event hsm.Event, groupID string, sequential bool, current *confInstance) (<-chan struct{}, *conformanceError) {
+func (r *runner) dispatchGroup(ctx context.Context, event hsm.Event, groupID string, sequential bool, current *confInstance) (hsm.Completion, *conformanceError) {
 	memberIDs := r.groupMembers[groupID]
 	if !sequential {
-		done := make(chan struct{})
+		done := make(chan error)
 		go func() {
 			defer close(done)
 			runtimeYield()
 			<-r.dispatchInstances(ctx, event, memberIDs, true, current)
 		}()
-		return done, nil
+		return hsm.Completion(done), nil
 	}
 	return r.dispatchInstances(ctx, event, memberIDs, sequential, current), nil
 }
 
-func (r *runner) dispatchTo(ctx context.Context, event hsm.Event, ids []string, sequential bool, current *confInstance) <-chan struct{} {
+func (r *runner) dispatchTo(ctx context.Context, event hsm.Event, ids []string, sequential bool, current *confInstance) hsm.Completion {
 	return r.dispatchInstances(ctx, event, ids, sequential, current)
 }
 
-func (r *runner) dispatchInstances(ctx context.Context, event hsm.Event, ids []string, wait bool, current *confInstance) <-chan struct{} {
+func (r *runner) dispatchInstances(ctx context.Context, event hsm.Event, ids []string, wait bool, current *confInstance) hsm.Completion {
 	if ctx == nil {
 		ctx = r.ctx
 	}
 	if ctx == nil {
-		done := make(chan struct{})
+		done := make(chan error)
 		r.recordError(conformanceError{code: "runtime_wait_without_context", message: "dispatch " + event.Name})
 		close(done)
-		return done
+		return hsm.Completion(done)
 	}
-	done := make(chan struct{})
+	done := make(chan error)
 	targets := r.activeDispatchTargets(ids)
 	orderedTargets := make([]string, 0, len(targets))
 	for _, id := range targets {
@@ -4397,21 +4397,24 @@ func (r *runner) dispatchInstances(ctx context.Context, event hsm.Event, ids []s
 				r.recordError(err)
 				r.endQueueFanoutGate(gate)
 				close(done)
-				return done
+				return hsm.Completion(done)
 			}
 			close(gate.entries[i].afterRelease)
 			select {
-			case <-signal:
+			case err := <-signal:
+				if err != nil {
+					r.recordError(err)
+				}
 			case <-ctx.Done():
 				r.recordError(conformanceError{code: "runtime_wait_cancelled", message: "queue dispatch " + id + " " + event.Name})
 				r.endQueueFanoutGate(gate)
 				close(done)
-				return done
+				return hsm.Completion(done)
 			}
 		}
 		r.endQueueFanoutGate(gate)
 		close(done)
-		return done
+		return hsm.Completion(done)
 	}
 	if !wait {
 		defer close(done)
@@ -4430,11 +4433,14 @@ func (r *runner) dispatchInstances(ctx context.Context, event hsm.Event, ids []s
 				if err := r.waitQueuePop(gate, queueGateKey{instanceID: id, eventName: event.Name}, ctx); err != nil {
 					r.recordError(err)
 					r.endQueueFanoutGate(gate)
-					return done
+					return hsm.Completion(done)
 				}
 				close(gate.entries[0].afterRelease)
 				select {
-				case <-signal:
+				case err := <-signal:
+					if err != nil {
+						r.recordError(err)
+					}
 				case <-ctx.Done():
 					r.recordError(conformanceError{code: "runtime_wait_cancelled", message: "queue dispatch " + id + " " + event.Name})
 				}
@@ -4443,13 +4449,16 @@ func (r *runner) dispatchInstances(ctx context.Context, event hsm.Event, ids []s
 			}
 			signal := hsm.Dispatch(ctx, instance, targetedEvent)
 			select {
-			case <-signal:
+			case err := <-signal:
+				if err != nil {
+					r.recordError(err)
+				}
 			case <-ctx.Done():
 				r.recordError(conformanceError{code: "runtime_wait_cancelled", message: "dispatch " + event.Name})
-				return done
+				return hsm.Completion(done)
 			}
 		}
-		return done
+		return hsm.Completion(done)
 	}
 	go func() {
 		defer close(done)
@@ -4458,14 +4467,17 @@ func (r *runner) dispatchInstances(ctx context.Context, event hsm.Event, ids []s
 			targetedEvent := r.eventForDispatchTarget(event, id, current)
 			r.clearEventMemory(instance, event.Name)
 			select {
-			case <-hsm.Dispatch(ctx, instance, targetedEvent):
+			case err := <-hsm.Dispatch(ctx, instance, targetedEvent):
+				if err != nil {
+					r.recordError(err)
+				}
 			case <-ctx.Done():
 				r.recordError(conformanceError{code: "runtime_wait_cancelled", message: "dispatch " + event.Name})
 				return
 			}
 		}
 	}()
-	return done
+	return hsm.Completion(done)
 }
 
 func (r *runner) eventForDispatchTarget(event hsm.Event, targetID string, current *confInstance) hsm.Event {
@@ -4488,7 +4500,7 @@ func (r *runner) instanceIDFor(instance *confInstance) string {
 	return ""
 }
 
-func (r *runner) addPendingWork(done <-chan struct{}) {
+func (r *runner) addPendingWork(done hsm.Completion) {
 	if done == nil {
 		return
 	}
@@ -5657,7 +5669,10 @@ func (r *runner) drainPendingWork() {
 		r.pendingWorkMu.Unlock()
 		for _, done := range work {
 			select {
-			case <-done:
+			case err := <-done:
+				if err != nil {
+					r.recordError(err)
+				}
 			case <-r.ctx.Done():
 				return
 			}
@@ -5694,21 +5709,46 @@ func (r *runner) deliverLogicalTimer(eventName string, trigger func()) {
 	}
 }
 
-func (r *runner) waitFor(ctx context.Context, done <-chan struct{}, label string) error {
-	if done == nil {
-		return nil
-	}
+func (r *runner) waitFor(ctx context.Context, done any, label string) error {
 	if ctx == nil {
 		ctx = r.ctx
 	}
 	if ctx == nil {
 		return conformanceError{code: "runtime_wait_without_context", message: label}
 	}
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return conformanceError{code: "runtime_wait_cancelled", message: label}
+	switch done := done.(type) {
+	case hsm.Completion:
+		if done == nil {
+			return nil
+		}
+		select {
+		case err := <-done:
+			return err
+		case <-ctx.Done():
+			return conformanceError{code: "runtime_wait_cancelled", message: label}
+		}
+	case <-chan struct{}:
+		if done == nil {
+			return nil
+		}
+		select {
+		case <-done:
+			return nil
+		case <-ctx.Done():
+			return conformanceError{code: "runtime_wait_cancelled", message: label}
+		}
+	case chan struct{}:
+		if done == nil {
+			return nil
+		}
+		select {
+		case <-done:
+			return nil
+		case <-ctx.Done():
+			return conformanceError{code: "runtime_wait_cancelled", message: label}
+		}
+	default:
+		return conformanceError{code: "runtime_wait_invalid_waiter", message: label}
 	}
 }
 
@@ -5915,7 +5955,7 @@ func (r *runner) executeBehaviorOp(ctx context.Context, sm *confInstance, event 
 			return nil, err
 		}
 		waitForDispatch := role == "operation" && !r.inRuntimeProcessing(ctx, sm)
-		var dispatched <-chan struct{}
+		var dispatched hsm.Completion
 		if target, ok := operation["target"].(string); ok && target == "all" {
 			r.trace = append(r.trace, anyMap{"type": "dispatch", "event": nested.Name, "target": "all"})
 			for _, id := range r.instanceOrder {

@@ -41,14 +41,17 @@ Define your state machine structure and behavior using the declarative builder p
 
 	// Start the state machine
 	sm := hsm.Started(context.Background(), &MyHSM{}, &model)
-	<-hsm.Dispatch(context.Background(), sm, hsm.Event{Name: "moveToBar"})
+	if err := <-hsm.Dispatch(context.Background(), sm, hsm.Event{Name: "moveToBar"}); err != nil {
+		// handle the dispatch failure
+	}
 
 # Synchronization
 
-Wait on the `Completion` returned by `Dispatch`, `Set`, `Restart`,
+Receive from the `Completion` returned by `Dispatch`, `Set`, `Restart`,
 `Stop`, `DispatchAll`, or `DispatchTo` before asserting on post-transition
-state. The completion remains receive-compatible as `<-chan struct{}` and also
-supports `Wait` and `Err` for direct-call failures.
+state. The received error is `nil` on success and identifies a runtime
+submission failure otherwise. A completion is one-shot; receive its result
+once.
 
 Direct dispatch to a nil, unstarted, or stopped instance returns a failed
 completion. Fan-out dispatch filters inactive recipients.

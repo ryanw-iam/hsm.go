@@ -929,7 +929,7 @@ func TestAttributeExplicitTypeControlsDynamicValue(t *testing.T) {
 	)
 
 	sm := hsm.Started(context.Background(), &THSM{}, &model)
-	awaitWaiter(t, "bad typed attribute set", hsm.Set(context.Background(), sm, "dynamic", "bad"))
+	assertCompletionErr(t, "bad typed attribute set", hsm.Set(context.Background(), sm, "dynamic", "bad"), hsm.ErrInvalidAttributeType)
 	if _, ok := hsm.Get(context.Background(), sm, "dynamic"); ok {
 		t.Fatal("invalid typed attribute write should not store a value")
 	}

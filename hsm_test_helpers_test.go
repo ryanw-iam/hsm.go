@@ -345,38 +345,96 @@ func (r *timerRegistration) trigger(t *testing.T) {
 	}
 }
 
-func awaitWaiter(t *testing.T, description string, waiter <-chan struct{}) {
+func awaitWaiter(t *testing.T, description string, waiter any) {
 	t.Helper()
-	select {
-	case <-waiter:
-	case <-time.After(waiterDeadline):
-		t.Fatalf("timed out waiting for %s", description)
-	}
-}
-
-func assertWaiterPending(t *testing.T, description string, waiter <-chan struct{}) {
-	t.Helper()
-	select {
-	case <-waiter:
-		t.Fatalf("expected %s to remain pending", description)
-	case <-time.After(waiterShouldRemainPendingFor):
-	}
-}
-
-func assertWaiterClosed(t *testing.T, description string, waiter <-chan struct{}) {
-	t.Helper()
-	select {
-	case <-waiter:
+	switch waiter := waiter.(type) {
+	case hsm.Completion:
+		select {
+		case err := <-waiter:
+			if err != nil {
+				t.Fatalf("%s completion error = %v", description, err)
+			}
+		case <-time.After(waiterDeadline):
+			t.Fatalf("timed out waiting for %s", description)
+		}
+	case <-chan struct{}:
+		select {
+		case <-waiter:
+		case <-time.After(waiterDeadline):
+			t.Fatalf("timed out waiting for %s", description)
+		}
+	case chan struct{}:
+		select {
+		case <-waiter:
+		case <-time.After(waiterDeadline):
+			t.Fatalf("timed out waiting for %s", description)
+		}
 	default:
-		t.Fatalf("expected %s waiter to already be closed", description)
+		t.Fatalf("unsupported waiter type %T for %s", waiter, description)
+	}
+}
+
+func assertWaiterPending(t *testing.T, description string, waiter any) {
+	t.Helper()
+	switch waiter := waiter.(type) {
+	case hsm.Completion:
+		select {
+		case err := <-waiter:
+			t.Fatalf("expected %s to remain pending, got %v", description, err)
+		case <-time.After(waiterShouldRemainPendingFor):
+		}
+	case <-chan struct{}:
+		select {
+		case <-waiter:
+			t.Fatalf("expected %s to remain pending", description)
+		case <-time.After(waiterShouldRemainPendingFor):
+		}
+	case chan struct{}:
+		select {
+		case <-waiter:
+			t.Fatalf("expected %s to remain pending", description)
+		case <-time.After(waiterShouldRemainPendingFor):
+		}
+	default:
+		t.Fatalf("unsupported waiter type %T for %s", waiter, description)
+	}
+}
+
+func assertWaiterClosed(t *testing.T, description string, waiter any) {
+	t.Helper()
+	switch waiter := waiter.(type) {
+	case hsm.Completion:
+		select {
+		case <-waiter:
+		default:
+			t.Fatalf("expected %s waiter to already be closed", description)
+		}
+	case <-chan struct{}:
+		select {
+		case <-waiter:
+		default:
+			t.Fatalf("expected %s waiter to already be closed", description)
+		}
+	case chan struct{}:
+		select {
+		case <-waiter:
+		default:
+			t.Fatalf("expected %s waiter to already be closed", description)
+		}
+	default:
+		t.Fatalf("unsupported waiter type %T for %s", waiter, description)
 	}
 }
 
 func assertCompletionErr(t *testing.T, description string, completion hsm.Completion, want error) {
 	t.Helper()
-	awaitWaiter(t, description, completion)
-	if err := completion.Err(); !errors.Is(err, want) {
-		t.Fatalf("%s completion error = %v, want %v", description, err, want)
+	select {
+	case err := <-completion:
+		if !errors.Is(err, want) {
+			t.Fatalf("%s completion error = %v, want %v", description, err, want)
+		}
+	case <-time.After(waiterDeadline):
+		t.Fatalf("timed out waiting for %s", description)
 	}
 }
 
