@@ -1075,6 +1075,12 @@ var closedChannel = func() chan struct{} {
 // after the channel closes.
 type Completion <-chan struct{}
 
+// completionErrors associates runtime failures with their completion channels.
+// Entries are keyed by the channel value itself: the map entry keeps the
+// channel reachable, so its allocation can never be recycled into a later
+// completion. Keying by the channel's numeric address is unsound — once the
+// channel is garbage collected the allocator may hand the same address to an
+// unrelated completion, whose Err would then report this entry's stale error.
 var completionErrors sync.Map
 
 // Err returns the runtime failure associated with this completion, if any.
@@ -1082,7 +1088,7 @@ func (completion Completion) Err() error {
 	if completion == nil {
 		return nil
 	}
-	if err, ok := completionErrors.Load(completionKey(completion)); ok {
+	if err, ok := completionErrors.Load((<-chan struct{})(completion)); ok {
 		return err.(error)
 	}
 	return nil
@@ -1108,17 +1114,10 @@ func failedCompletion(err error) Completion {
 	done := make(chan struct{})
 	result := Completion(done)
 	if err != nil {
-		completionErrors.Store(completionKey(result), err)
+		completionErrors.Store((<-chan struct{})(result), err)
 	}
 	close(done)
 	return result
-}
-
-func completionKey(done <-chan struct{}) uintptr {
-	if done == nil {
-		return 0
-	}
-	return reflect.ValueOf(done).Pointer()
 }
 
 func isNilValue(value any) bool {
