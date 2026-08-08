@@ -1070,55 +1070,38 @@ var closedChannel = func() chan struct{} {
 	return done
 }()
 
-// Completion is a receive-only completion channel. It remains compatible with
-// `<-hsm.Dispatch(...)` while allowing callers to inspect runtime failures
-// after the channel closes.
-type Completion <-chan struct{}
+var completedChannel = func() chan error {
+	done := make(chan error)
+	close(done)
+	return done
+}()
 
-var completionErrors sync.Map
+// Completion is a one-shot receive-only channel that yields the runtime error,
+// if any, when the operation completes. A nil value means the operation
+// succeeded.
+type Completion <-chan error
 
-// Err returns the runtime failure associated with this completion, if any.
-func (completion Completion) Err() error {
-	if completion == nil {
-		return nil
-	}
-	if err, ok := completionErrors.Load(completionKey(completion)); ok {
-		return err.(error)
-	}
-	return nil
-}
-
-// Wait waits for completion and returns Err.
-func (completion Completion) Wait() error {
-	if completion == nil {
-		return nil
-	}
-	<-completion
-	return completion.Err()
-}
-
-func completion(done <-chan struct{}) Completion {
-	if done == nil {
-		return Completion(closedChannel)
-	}
-	return Completion(done)
+func completedCompletion() Completion {
+	return completedChannel
 }
 
 func failedCompletion(err error) Completion {
-	done := make(chan struct{})
-	result := Completion(done)
-	if err != nil {
-		completionErrors.Store(completionKey(result), err)
-	}
+	done := make(chan error, 1)
+	done <- err
 	close(done)
-	return result
+	return done
 }
 
-func completionKey(done <-chan struct{}) uintptr {
-	if done == nil {
-		return 0
+func completionAfter(wait <-chan struct{}) Completion {
+	if wait == nil {
+		return completedCompletion()
 	}
-	return reflect.ValueOf(done).Pointer()
+	done := make(chan error)
+	go func() {
+		<-wait
+		close(done)
+	}()
+	return done
 }
 
 func isNilValue(value any) bool {
@@ -1410,7 +1393,7 @@ func (mutex *mutex) tryLock() bool {
 type processingDrain struct {
 	mutex     sync.Mutex
 	scheduled bool
-	waiters   []chan struct{}
+	waiters   []chan error
 	ctx       context.Context
 	eventID   string
 }
@@ -1532,35 +1515,21 @@ func (group *Group) get(name string) (any, bool) {
 	return Get(context.Background(), group.instances[0], name)
 }
 
-func (group *Group) set(ctx context.Context, name string, value any) <-chan struct{} {
+func (group *Group) set(ctx context.Context, name string, value any) Completion {
 	if group == nil || len(group.instances) == 0 {
-		return closedChannel
+		return completedCompletion()
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	waiters := make([]<-chan struct{}, 0, len(group.instances))
+	waiters := make([]<-chan error, 0, len(group.instances))
 	for _, instance := range group.instances {
 		if instance == nil {
 			continue
 		}
 		waiters = append(waiters, instance.set(ctx, name, value))
 	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for _, ch := range waiters {
-			if ch == nil {
-				continue
-			}
-			select {
-			case <-ch:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return done
+	return waitForAllCompletions(ctx, waiters)
 }
 
 func (group *Group) call(ctx context.Context, name string, args ...any) (any, error) {
@@ -1608,9 +1577,13 @@ func (group *Group) wait() <-chan struct{} {
 	if group == nil || len(group.instances) == 0 {
 		return closedChannel
 	}
-	return group.waitAll(context.Background(), func(instance Instance) <-chan struct{} {
-		return instance.wait()
-	})
+	waiters := make([]<-chan struct{}, 0, len(group.instances))
+	for _, instance := range group.instances {
+		if instance != nil {
+			waiters = append(waiters, instance.wait())
+		}
+	}
+	return waitForAll(context.Background(), waiters)
 }
 
 func (group *Group) start(ctx context.Context, event *Event) {
@@ -1634,9 +1607,9 @@ func (group *Group) start(ctx context.Context, event *Event) {
 	}
 }
 
-func (group *Group) dispatch(ctx context.Context, event Event) <-chan struct{} {
+func (group *Group) dispatch(ctx context.Context, event Event) Completion {
 	if group == nil || len(group.instances) == 0 {
-		return closedChannel
+		return completedCompletion()
 	}
 	if event.Kind == 0 {
 		event.Kind = EventKind
@@ -1648,9 +1621,9 @@ func (group *Group) dispatch(ctx context.Context, event Event) <-chan struct{} {
 	if current, ok := FromContext(ctx); ok {
 		source = ID(current)
 	}
-	return group.waitAll(ctx, func(instance Instance) <-chan struct{} {
+	return group.waitAll(ctx, func(instance Instance) Completion {
 		if !isStarted(instance) {
-			return closedChannel
+			return completedCompletion()
 		}
 		targetedEvent := eventForTarget(event, source, ID(instance))
 		return instance.dispatch(ctx, targetedEvent)
@@ -1670,11 +1643,11 @@ func (group *Group) qualifiedName() string {
 	return group.id
 }
 
-func (group *Group) stop(ctx context.Context) <-chan struct{} {
+func (group *Group) stop(ctx context.Context) Completion {
 	if group == nil || len(group.instances) == 0 {
-		return closedChannel
+		return completedCompletion()
 	}
-	return group.waitAll(ctx, func(instance Instance) <-chan struct{} {
+	return group.waitAll(ctx, func(instance Instance) Completion {
 		return instance.stop(ctx)
 	}, func() {
 		if group.cancel != nil {
@@ -1683,19 +1656,23 @@ func (group *Group) stop(ctx context.Context) <-chan struct{} {
 	})
 }
 
-func (group *Group) restart(ctx context.Context, maybeData ...any) <-chan struct{} {
+func (group *Group) restart(ctx context.Context, maybeData ...any) Completion {
 	if group == nil || len(group.instances) == 0 {
-		return closedChannel
+		return completedCompletion()
 	}
 	if !isStarted(group) {
-		return closedChannel
+		return completedCompletion()
 	}
 	stopCtx, startCtx := restartContexts(ctx, group)
-	done := make(chan struct{})
+	done := make(chan error, 1)
 	go func() {
 		defer close(done)
 		select {
-		case <-group.stop(stopCtx):
+		case err := <-group.stop(stopCtx):
+			if err != nil {
+				done <- err
+				return
+			}
 		case <-stopCtx.Done():
 			return
 		}
@@ -1715,15 +1692,15 @@ func (group *Group) Clock() Clock {
 	return DefaultClock
 }
 
-func (group *Group) waitAll(ctx context.Context, request func(instance Instance) <-chan struct{}, onDone ...func()) <-chan struct{} {
-	waiters := make([]<-chan struct{}, 0, len(group.instances))
+func (group *Group) waitAll(ctx context.Context, request func(instance Instance) Completion, onDone ...func()) Completion {
+	waiters := make([]<-chan error, 0, len(group.instances))
 	for _, instance := range group.instances {
 		if instance == nil {
 			continue
 		}
 		waiters = append(waiters, request(instance))
 	}
-	return waitForAll(ctx, waiters, onDone...)
+	return waitForAllCompletions(ctx, waiters, onDone...)
 }
 
 func waitForAll(ctx context.Context, waiters []<-chan struct{}, onDone ...func()) <-chan struct{} {
@@ -1760,6 +1737,42 @@ func waitForAll(ctx context.Context, waiters []<-chan struct{}, onDone ...func()
 	return done
 }
 
+func waitForAllCompletions(ctx context.Context, waiters []<-chan error, onDone ...func()) Completion {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+		var firstErr error
+		for _, ch := range waiters {
+			if ch == nil {
+				continue
+			}
+			select {
+			case err := <-ch:
+				if firstErr == nil {
+					firstErr = err
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		for _, callback := range onDone {
+			if callback != nil {
+				callback()
+			}
+		}
+		if firstErr != nil {
+			done <- firstErr
+		}
+	}()
+	return done
+}
+
 func isStarted(instance Instance) bool {
 	if instance == nil {
 		return false
@@ -1781,16 +1794,16 @@ type Instance interface {
 	State() string
 	Context() context.Context
 	get(name string) (any, bool)
-	set(ctx context.Context, name string, value any) <-chan struct{}
+	set(ctx context.Context, name string, value any) Completion
 	call(ctx context.Context, name string, args ...any) (any, error)
 	// non exported
 	channels() *after
 	wait() <-chan struct{}
 	start(ctx context.Context, event *Event)
-	dispatch(ctx context.Context, event Event) <-chan struct{}
+	dispatch(ctx context.Context, event Event) Completion
 	bind(instance Instance)
-	stop(ctx context.Context) <-chan struct{}
-	restart(ctx context.Context, maybeData ...any) <-chan struct{}
+	stop(ctx context.Context) Completion
+	restart(ctx context.Context, maybeData ...any) Completion
 	Clock() Clock
 }
 
@@ -2046,9 +2059,9 @@ func (sm *hsm[T]) start(ctx context.Context, event *Event) {
 	}
 }
 
-func (sm *hsm[T]) restart(ctx context.Context, maybeData ...any) <-chan struct{} {
+func (sm *hsm[T]) restart(ctx context.Context, maybeData ...any) Completion {
 	if !isStarted(sm) {
-		return closedChannel
+		return completedCompletion()
 	}
 	stopCtx, startCtx := restartContexts(ctx, sm)
 	var data any
@@ -2056,16 +2069,19 @@ func (sm *hsm[T]) restart(ctx context.Context, maybeData ...any) <-chan struct{}
 		data = maybeData[0]
 	}
 	select {
-	case <-sm.stop(stopCtx):
+	case err := <-sm.stop(stopCtx):
+		if err != nil {
+			return failedCompletion(err)
+		}
 	case <-stopCtx.Done():
-		return closedChannel
+		return completedCompletion()
 	}
 	if stopCtx.Err() != nil || isStarted(sm) {
-		return closedChannel
+		return completedCompletion()
 	}
 	initialEvent := InitialEvent.WithData(data)
-	(*hsm[T])(sm).start(startCtx, &initialEvent)
-	return sm.processing.wait()
+	sm.start(startCtx, &initialEvent)
+	return completionAfter(sm.processing.wait())
 }
 
 func restartContexts(ctx context.Context, instance Instance) (context.Context, context.Context) {
@@ -2086,11 +2102,11 @@ func (sm *hsm[T]) wait() <-chan struct{} {
 	return sm.processing.wait()
 }
 
-func (sm *hsm[T]) stop(ctx context.Context) <-chan struct{} {
+func (sm *hsm[T]) stop(ctx context.Context) Completion {
 	if sm == nil {
-		return closedChannel
+		return completedCompletion()
 	}
-	signal := make(chan struct{})
+	signal := make(chan error)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -2207,16 +2223,16 @@ func (sm *hsm[T]) get(name string) (any, bool) {
 	return cloneMetadataValue(value), true
 }
 
-func (sm *hsm[T]) set(ctx context.Context, name string, value any) <-chan struct{} {
+func (sm *hsm[T]) set(ctx context.Context, name string, value any) Completion {
 	if !isStarted(sm) {
 		return failedCompletion(ErrInvalidState)
 	}
 	return sm.setAttribute(ctx, name, value, true)
 }
 
-func (sm *hsm[T]) setAttribute(ctx context.Context, name string, value any, emit bool) <-chan struct{} {
+func (sm *hsm[T]) setAttribute(ctx context.Context, name string, value any, emit bool) Completion {
 	if sm == nil {
-		return closedChannel
+		return completedCompletion()
 	}
 	if ctx == nil {
 		ctx = sm.context
@@ -2236,10 +2252,10 @@ func (sm *hsm[T]) setAttribute(ctx context.Context, name string, value any, emit
 	}
 	sm.attributes.Store(qualifiedName, value)
 	if !emit {
-		return closedChannel
+		return completedCompletion()
 	}
 	if exists && reflect.DeepEqual(old, value) {
-		return closedChannel
+		return completedCompletion()
 	}
 	event := Event{
 		Kind:   ChangeEventKind,
@@ -2995,12 +3011,15 @@ func (sm *hsm[T]) terminate(ctx context.Context, element Element) {
 
 }
 
-func (sm *hsm[T]) process(ctx context.Context, currentEventID string) {
+func (sm *hsm[T]) process(ctx context.Context, currentEventID string, completions ...chan error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err := fmt.Errorf("hsm: panic while processing event in state machine: %v\n\n%s", r, string(debug.Stack()))
 			slog.Error("hsm: panic while processing event in state machine", "error", err)
 			go sm.dispatch(ctx, ErrorEvent.WithData(err))
+		}
+		if len(completions) > 0 && completions[0] != nil {
+			close(completions[0])
 		}
 		sm.processing.wUnlock()
 	}()
@@ -3290,7 +3309,7 @@ func (sm *hsm[T]) takeSnapshot() Snapshot {
 	}
 }
 
-func (sm *hsm[T]) dispatch(ctx context.Context, event Event) <-chan struct{} {
+func (sm *hsm[T]) dispatch(ctx context.Context, event Event) Completion {
 	if sm == nil {
 		return failedCompletion(ErrNilHSM)
 	}
@@ -3319,14 +3338,14 @@ func (sm *hsm[T]) dispatch(ctx context.Context, event Event) <-chan struct{} {
 	return done
 }
 
-func (sm *hsm[T]) scheduleProcess(ctx context.Context, currentEventID string) <-chan struct{} {
+func (sm *hsm[T]) scheduleProcess(ctx context.Context, currentEventID string) Completion {
 	if sm.processing.tryLock() {
-		done := sm.processing.wait()
+		done := make(chan error)
 		processCtx := context.WithValue(sm.processContext(ctx), processingContextKey, sm)
-		go sm.process(processCtx, currentEventID)
+		go sm.process(processCtx, currentEventID, done)
 		return done
 	}
-	signal := make(chan struct{})
+	signal := make(chan error)
 	sm.drain.mutex.Lock()
 	sm.drain.waiters = append(sm.drain.waiters, signal)
 	if sm.drain.ctx == nil {
@@ -3373,7 +3392,7 @@ func (sm *hsm[T]) runScheduledDrain(done <-chan struct{}) {
 	}
 }
 
-func (sm *hsm[T]) takeDrainBatch() (context.Context, string, []chan struct{}) {
+func (sm *hsm[T]) takeDrainBatch() (context.Context, string, []chan error) {
 	sm.drain.mutex.Lock()
 	defer sm.drain.mutex.Unlock()
 	ctx := sm.drain.ctx
@@ -3385,33 +3404,32 @@ func (sm *hsm[T]) takeDrainBatch() (context.Context, string, []chan struct{}) {
 	return ctx, eventID, waiters
 }
 
-func closeDrainWaiters(waiters []chan struct{}) {
+func closeDrainWaiters(waiters []chan error) {
 	for _, waiter := range waiters {
 		close(waiter)
 	}
 }
 
 // Dispatch sends an event to a specific state machine instance.
-// It returns a completion channel that closes when the event has been fully
-// processed. Waiting on that channel is the supported production
-// synchronization path before asserting on post-transition state.
-// Go's completion channel can be received directly; call Completion.Err after
-// it closes to inspect direct runtime submission failures.
+// It returns a completion channel that yields the runtime error, if any, when
+// the event has been fully processed. A nil error means success.
 //
 // Example:
 //
 //	model := hsm.Define(...)
 //	sm := hsm.Started(context.Background(), &MyHSM{}, &model)
 //	done := hsm.Dispatch(context.Background(), sm, hsm.Event{Name: "start"})
-//	<-done // Wait for event processing to complete
+//	if err := <-done; err != nil {
+//		// Handle the dispatch failure.
+//	}
 func Dispatch[T context.Context](ctx T, hsm Instance, event Event) Completion {
 	if hsm != nil {
-		return completion(hsm.dispatch(ctx, event))
+		return hsm.dispatch(ctx, event)
 	}
 	// get the hsm from the context
 	if hsm, ok := FromContext(ctx); ok {
 		// dispatch the event to the hsm
-		return completion(hsm.dispatch(ctx, event))
+		return hsm.dispatch(ctx, event)
 	}
 	return failedCompletion(ErrMissingHSM)
 }
@@ -3429,16 +3447,15 @@ func Get[T stringLike](ctx context.Context, hsm Instance, name T) (any, bool) {
 }
 
 // Set updates an attribute value and emits an OnSet change event.
-// It returns a completion channel that closes after the resulting processing
-// completes. Waiting on that channel is the supported production
-// synchronization path before asserting on post-transition state.
+// It returns a completion channel that yields the runtime error, if any, after
+// the resulting processing completes. A nil error means success.
 func Set[T stringLike](ctx context.Context, hsm Instance, name T, value any) Completion {
 	attributeName := string(name)
 	if hsm != nil {
-		return completion(hsm.set(ctx, attributeName, value))
+		return hsm.set(ctx, attributeName, value)
 	}
 	if hsm, ok := FromContext(ctx); ok {
-		return completion(hsm.set(ctx, attributeName, value))
+		return hsm.set(ctx, attributeName, value)
 	}
 	return failedCompletion(ErrMissingHSM)
 }
@@ -3456,10 +3473,9 @@ func Call[T stringLike](ctx context.Context, hsm Instance, name T, args ...any) 
 }
 
 // DispatchAll sends an event to all state machine instances in the current
-// context. It returns a completion channel that closes when all selected
-// instances have processed the event. Waiting on that channel is the
-// supported production synchronization path before asserting on
-// post-transition state.
+// context. It returns a completion channel that yields the first runtime error,
+// if any, after all selected instances have processed the event. A nil error
+// means success.
 //
 // Example:
 //
@@ -3472,22 +3488,22 @@ func DispatchAll(ctx context.Context, event Event) Completion {
 }
 
 // DispatchTo sends an event to the selected state machine instances in the
-// current context. It returns a completion channel that closes when all
-// matching instances have processed the event. Waiting on that channel is the
-// supported production synchronization path before asserting on
-// post-transition state.
+// current context. It returns a completion channel that yields the first
+// runtime error, if any, after all matching instances have processed the event.
+// A nil error means success.
 func DispatchTo[T stringLike](ctx context.Context, event Event, maybeIds ...T) Completion {
 	if ctx == nil {
-		return completion(closedChannel)
+		return completedCompletion()
 	}
 	instances, ok := ctx.Value(Keys.Instances).(*sync.Map)
 	if !ok || instances == nil {
-		return completion(closedChannel)
+		return completedCompletion()
 	}
-	signal := make(chan struct{})
-	go func(signal chan struct{}) {
+	signal := make(chan error, 1)
+	go func(signal chan error) {
 		defer close(signal)
-		signals := make(map[string]<-chan struct{})
+		signals := make(map[string]<-chan error)
+		var firstErr error
 		source := ""
 		if current, ok := FromContext(ctx); ok {
 			source = ID(current)
@@ -3504,15 +3520,21 @@ func DispatchTo[T stringLike](ctx context.Context, event Event, maybeIds ...T) C
 		for len(signals) > 0 {
 			for i, ch := range signals {
 				select {
-				case <-ch:
+				case err := <-ch:
+					if firstErr == nil {
+						firstErr = err
+					}
 					delete(signals, i)
 				case <-ctx.Done():
 					return
 				}
 			}
 		}
+		if firstErr != nil {
+			signal <- firstErr
+		}
 	}(signal)
-	return completion(signal)
+	return signal
 }
 
 func eventForTarget(event Event, source, target string) Event {
@@ -3621,10 +3643,9 @@ func InstancesFromContext(ctx context.Context) ([]Instance, bool) {
 }
 
 // Stop gracefully stops a state machine instance.
-// It returns a completion channel that closes after shutdown processing
-// finishes. Waiting on that channel is the supported production
-// synchronization path before asserting on post-transition state. If no
-// instance is available, Stop returns the shared closed completion channel.
+// It returns a completion channel that yields the runtime error, if any, after
+// shutdown processing finishes. A nil error means success. If no instance is
+// available, Stop returns an already successful completion channel.
 //
 // Example:
 //
@@ -3633,31 +3654,30 @@ func InstancesFromContext(ctx context.Context) ([]Instance, bool) {
 //	<-hsm.Stop(context.Background(), sm)
 func Stop(ctx context.Context, hsm Instance) Completion {
 	if hsm != nil {
-		return completion(hsm.stop(ctx))
+		return hsm.stop(ctx)
 	}
 	if hsm, ok := FromContext(ctx); ok {
-		return completion(hsm.stop(ctx))
+		return hsm.stop(ctx)
 	}
-	return completion(closedChannel)
+	return completedCompletion()
 }
 
 // Restart stops a state machine and restarts it from the initial state.
 // Optional data can be passed to reinitialize the state machine's data field.
-// It returns a completion channel that closes when the restart completes.
-// Waiting on that channel is the supported production synchronization path
-// before asserting on post-transition state.
+// It returns a completion channel that yields the runtime error, if any, when
+// the restart completes. A nil error means success.
 func Restart(ctx context.Context, hsm Instance, maybeData ...any) Completion {
 	if !isNilValue(hsm) {
 		if !isStarted(hsm) {
 			return failedCompletion(ErrInvalidState)
 		}
-		return completion(hsm.restart(ctx, maybeData...))
+		return hsm.restart(ctx, maybeData...)
 	}
 	if hsm, ok := FromContext(ctx); ok {
 		if !isStarted(hsm) {
 			return failedCompletion(ErrInvalidState)
 		}
-		return completion(hsm.restart(ctx, maybeData...))
+		return hsm.restart(ctx, maybeData...)
 	}
 	return failedCompletion(ErrMissingHSM)
 }
